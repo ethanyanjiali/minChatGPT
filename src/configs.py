@@ -1,10 +1,10 @@
-import dataclasses
+from dataclasses import dataclass
 
 
-@dataclasses
+@dataclass
 class GPTConfig:
     n_layers: int
-    n_head: int
+    n_heads: int
     embedding_dim: int
     dropout_rate: float
     use_bias: bool

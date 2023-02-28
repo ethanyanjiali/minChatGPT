@@ -4,11 +4,56 @@ from torch import nn
 from torch import Tensor
 from torch.nn import functional as F
 
-from configs import GPTConfig
-
 # [1] Attention is all you need
 # [2] Improving Language Understanding by Generated Pre-Training
 # [3] Note 10: Self-Attention & Transformers
+
+from dataclasses import dataclass
+
+
+@dataclass
+class GPTConfig:
+    n_layers: int
+    n_heads: int
+    embedding_dim: int
+    dropout_rate: float
+    use_bias: bool
+    block_size: int
+    vocab_size: int
+
+
+gpt_configs = {
+    "gpt2-medium":
+    GPTConfig(
+        n_layers=24,
+        n_heads=16,
+        embedding_dim=1024,
+        dropout_rate=0,
+        use_bias=True,
+        block_size=1024,
+        vocab_size=50257,
+    ),
+    'gpt2-large':
+    GPTConfig(
+        n_layers=36,
+        n_heads=20,
+        embedding_dim=1280,
+        dropout_rate=0,
+        use_bias=True,
+        block_size=1024,
+        vocab_size=50257,
+    ),
+    "gpt2-xl":
+    GPTConfig(
+        n_layers=48,
+        n_heads=25,
+        embedding_dim=1600,
+        dropout_rate=0,
+        use_bias=True,
+        block_size=1024,
+        vocab_size=50257,
+    )
+}
 
 
 class MaskedMultiheadSelfAttention(nn.Module):
@@ -37,7 +82,7 @@ class MaskedMultiheadSelfAttention(nn.Module):
         # (1, 1, block_size, block_size)
         self.register_buffer("mask", mask)
 
-    def forward(self, x: Tensor):
+    def forward(self, x: Tensor, attention_mask: Tensor = None):
         """
         x: shape of (B, T, C)
         """
@@ -64,9 +109,24 @@ class MaskedMultiheadSelfAttention(nn.Module):
         attention = Q @ K.transpose(2, 3)
         attention *= 1.0 / math.sqrt(K.size(-1))
         # In transformer decoder, one word can only attend to words before itself
-        # also, we don't need the full mask, just need one with shape of (1, 1, T, T)
         attention = attention.masked_fill(self.mask[:, :, :T, :T] == 0,
                                           float('-inf'))    # (B, h, T, T)
+        if attention_mask is not None:
+            # https://github.com/huggingface/transformers/blob/c7f3abc257af9dfb6006a76f2b09b48355322d4d/src/transformers/models/gpt2/modeling_gpt2.py#L805
+            # also, we don't need attend to padding tokens
+            attention_mask = attention_mask[:, None,
+                                            None, :]    # (B, T) -> (B, 1, 1, T)
+            attention_mask = (1.0 - attention_mask) * torch.finfo(
+                attention.dtype).min
+            # This will broadcast to each row of the last dimension of attention map
+            # [[[[1, -inf, -inf],
+            #    [1, 1,    -inf],
+            #    [1, 1,    1   ]]]]]  + [[[[0, 0, -float.min]]]]]
+            # =
+            # [[[[1, -inf, -inf       ],
+            #    [1, 1,    -inf       ],
+            #    [1, 1,    1-float.min]]]]]
+            attention = attention + attention_mask
 
         attention = F.softmax(attention, dim=-1)    # (B, h, T, T)
         attention = self.attention_dropout(attention)
@@ -119,10 +179,10 @@ class TransformerDecoderBlock(nn.Module):
                                 elementwise_affine=cfg.use_bias)
         self.ffn = FeedForwardNetworks(cfg)
 
-    def forward(self, x):
+    def forward(self, x: Tensor, attention_mask: Tensor = None):
         identity1 = x
         x = self.ln1(x)
-        x = self.mmsa(x)
+        x = self.mmsa(x, attention_mask)
         x = identity1 + x
 
         identity2 = x
@@ -132,57 +192,57 @@ class TransformerDecoderBlock(nn.Module):
         return y
 
 
+class TransformerDecoder(nn.Module):
+
+    def __init__(self, cfg: GPTConfig) -> None:
+        super().__init__()
+        self.token_embedding_layer = nn.Embedding(
+            cfg.vocab_size, cfg.embedding_dim)    # (Vocab, d)
+        self.postion_embedding_layer = nn.Embedding(cfg.block_size,
+                                                    cfg.embedding_dim)
+        self.input_dropout = nn.Dropout(cfg.dropout_rate)
+        self.decoder_blocks = nn.ModuleList(
+            [TransformerDecoderBlock(cfg) for _ in range(cfg.n_layers)])
+        self.ln = nn.LayerNorm(cfg.embedding_dim,
+                               elementwise_affine=cfg.use_bias)
+
+    def forward(self, x: Tensor, attention_mask: Tensor = None):
+        B, T = x.size()
+        pos = torch.arange(0, T, dtype=torch.long,
+                           device=x.device).unsqueeze(0)    # (1, T)
+        token_embeddings = self.token_embedding_layer(x)    # (B, T, d)
+        pos_embeddings = self.postion_embedding_layer(pos)    # (B, T, d)
+        x = self.input_dropout(token_embeddings + pos_embeddings)
+
+        # N decoder blocks
+        for block in self.decoder_blocks:
+            x = block(x, attention_mask)
+
+        y = self.ln(x)
+        return y
+
+
 class GPT(nn.Module):
 
     def __init__(self, cfg: GPTConfig) -> None:
         super().__init__()
         self.cfg: GPTConfig = cfg
 
-        self.transformer = nn.ModuleDict({
-            "token_embedding_layer":
-            nn.Embedding(cfg.vocab_size, cfg.embedding_dim),    # (Vocab, d)
-            "postion_embedding_layer":
-            nn.Embedding(cfg.block_size, cfg.embedding_dim),
-        # "We apply dropout tp the sums of the embeddings and the positional encodings"
-        # 5.4 in [1]
-            "input_dropout":
-            nn.Dropout(cfg.dropout_rate),
-            "decoder_blocks":
-            nn.ModuleList(
-                [TransformerDecoderBlock(cfg) for _ in range(cfg.n_layers)]),
-            "ln":
-            nn.LayerNorm(cfg.embedding_dim, elementwise_affine=cfg.use_bias)
-        })
+        self.transformer = TransformerDecoder(cfg)
+        # Final linear layer as language model head w/o softmax
+        self.lm_head = nn.Linear(cfg.embedding_dim, cfg.vocab_size, bias=False)
 
-        # Final linear layer w/o softmax
-        self.transformer_head = nn.Linear(cfg.embedding_dim,
-                                          cfg.vocab_size,
-                                          bias=False)
-
-    def forward(self, indices: Tensor):
+    def forward(self, x: Tensor, attention_mask: Tensor = None):
         """
-        indices: Shape of (B, T)
+        x: Shape of (B, T)
         """
-        B, T = indices.size()
-        pos = torch.arange(0, T, dtype=torch.long,
-                           device=indices.device).unsqueeze(0)    # (1, T)
-        token_embeddings = self.transformer.token_embedding_layer(
-            indices)    # (B, T, d)
-        pos_embeddings = self.transformer.postion_embedding_layer(
-            pos)    # (B, T, d)
-        x = self.transformer.input_dropout(token_embeddings + pos_embeddings)
-
-        # N decoder blocks
-        for block in self.transformer.decoder_blocks:
-            x = block(x)
-
-        x = self.transformer.ln(x)
-        logits = self.transformer_head(x)
+        x = self.transformer(x, attention_mask)
+        logits = self.lm_head(x)
 
         return logits
 
     @classmethod
-    def from_pretrained(cls):
+    def from_pretrained(cls, name='gpt2-xl'):
         """
         https://github.com/karpathy/nanoGPT/blob/master/model.py#L213
         """
@@ -201,7 +261,6 @@ class GPT(nn.Module):
                 "qkv_projection": "c_attn",
                 "output_projection": "c_proj",
                 "ln": "ln_f",
-                "transformer_head": "lm_head",
             }
             hf_key = []
             for name in k.split('.'):
@@ -218,23 +277,18 @@ class GPT(nn.Module):
                     return True
             return False
 
-        cfg = GPTConfig(
-            n_layers=48,
-            n_heads=25,
-            embedding_dim=1600,
-            dropout_rate=0,
-            use_bias=True,
-            block_size=1024,
-            vocab_size=50257,
-        )
+        cfg = gpt_configs[name]
         model = GPT(cfg)
         model_states = model.state_dict()
         model_states_keys = [
             k for k in model_states.keys() if not k.endswith('.mmsa.mask')
         ]
+        with open('model_states_keys.txt', 'w') as fp:
+            for k in model_states_keys:
+                fp.write(k + '\n')
 
         from transformers import GPT2LMHeadModel
-        model_pretrained = GPT2LMHeadModel.from_pretrained('gpt2-xl')
+        model_pretrained = GPT2LMHeadModel.from_pretrained(name)
         pretrained_states = model_pretrained.state_dict()
 
         pretrained_states_keys = [
@@ -244,6 +298,9 @@ class GPT(nn.Module):
         pretrained_states_keys = [
             k for k in pretrained_states_keys if not k.endswith('.attn.bias')
         ]
+        with open('pretrained_states_keys.txt', 'w') as fp:
+            for k in pretrained_states_keys:
+                fp.write(k + '\n')
 
         assert len(pretrained_states_keys) == len(
             model_states_keys
@@ -294,3 +351,25 @@ class GPT(nn.Module):
             indices = torch.cat((indices, indices_next), dim=1)
 
         return indices
+
+
+class GPTRM(nn.Module):
+
+    def __init__(self, cfg: GPTConfig) -> None:
+        super().__init__()
+        self.backbone = GPT(cfg)
+        self.backbone.lm_head = nn.Identity()
+        self.value_head = nn.Linear(cfg.embedding_dim, 1, bias=False)
+
+    def forward(self, x: Tensor, attention_mask: Tensor = None):
+        hidden = self.backbone(x, attention_mask)
+        score = self.value_head(hidden).mean(dim=1)
+        return score
+
+    @classmethod
+    def from_pretrained(cls, name):
+        cfg = gpt_configs[name]
+        model = GPTRM(cfg)
+        model.backbone = GPT.from_pretrained(name)
+        model.backbone.lm_head = nn.Identity()
+        return model

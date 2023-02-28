@@ -1,3 +1,6 @@
 env/
 nanoGPT/
 __pycache__/
+*keys.txt
+weights/
+logs/

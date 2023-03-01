@@ -3,6 +3,8 @@ import torch
 from torch import nn
 from torch import Tensor
 from torch.nn import functional as F
+from transformers import GPT2Model
+from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
 
 # [1] Attention is all you need
 # [2] Improving Language Understanding by Generated Pre-Training
@@ -353,7 +355,28 @@ class GPT(nn.Module):
         return indices
 
 
-class GPTRM(nn.Module):
+class HFGPTRewardModel(nn.Module):
+
+    def __init__(self, cfg: GPTConfig) -> None:
+        super().__init__()
+        self.backbone = None
+        self.value_head = nn.Linear(cfg.embedding_dim, 1, bias=False)
+
+    def forward(self, x: Tensor, attention_mask: Tensor = None):
+        output: BaseModelOutputWithPastAndCrossAttentions = self.backbone(
+            input_ids=x, attention_mask=attention_mask)
+        score = self.value_head(output.last_hidden_state).mean(dim=1)
+        return score
+
+    @classmethod
+    def from_pretrained(cls, name):
+        cfg = gpt_configs[name]
+        model = HFGPTRewardModel(cfg)
+        model.backbone = GPT2Model.from_pretrained(name)
+        return model
+
+
+class GPTRewardModel(nn.Module):
 
     def __init__(self, cfg: GPTConfig) -> None:
         super().__init__()
@@ -369,7 +392,7 @@ class GPTRM(nn.Module):
     @classmethod
     def from_pretrained(cls, name):
         cfg = gpt_configs[name]
-        model = GPTRM(cfg)
+        model = GPTRewardModel(cfg)
         model.backbone = GPT.from_pretrained(name)
         model.backbone.lm_head = nn.Identity()
         return model

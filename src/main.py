@@ -1,10 +1,10 @@
-from models import GPT, GPTRM
+from models import GPT, GPTRewardModel, HFGPTRewardModel
 from dataset import AnthropicHHRLHFDataset
 import torch
 import tiktoken
 import click
 from torch.utils.data import DataLoader
-from trainers import RMTrainer
+from trainers import RewardModelTrainer
 
 
 @click.command()
@@ -34,7 +34,7 @@ def main(task):
             print(decode(y[0].tolist()))
             print('---------------')
     elif task == "reward":
-        rm = GPTRM.from_pretrained('gpt2-xl')
+        rm = GPTRewardModel.from_pretrained('gpt2-xl')
         rm.eval()
         rm.to(device)
         score = rm(x)
@@ -65,15 +65,22 @@ def main(task):
                                top_k=top_k)
             print(decode(y[0].tolist()))
             print('End---------------')
-    elif task == "train":
-        rm = GPTRM.from_pretrained('gpt2-medium')
+    elif task == "train_rm":
+        rm = GPTRewardModel.from_pretrained('gpt2-medium')
+        # rm = HFGPTRewardModel.from_pretrained('gpt2-medium')
         train_ds = AnthropicHHRLHFDataset(block_size=1024,
                                           split='train',
-                                          max_examples=7500)
+                                          max_examples=20,
+                                          tokenizer_name="tiktoken/gpt2")
         test_ds = AnthropicHHRLHFDataset(block_size=1024,
-                                         split='test',
-                                         max_examples=7500)
-        trainer = RMTrainer(device, rm, train_ds, test_ds)
+                                         split='train',
+                                         max_examples=20,
+                                         tokenizer_name="tiktoken/gpt2")
+        trainer = RewardModelTrainer(device,
+                                     rm,
+                                     train_ds,
+                                     test_ds,
+                                     total_epochs=10)
         trainer.fit()
 
 

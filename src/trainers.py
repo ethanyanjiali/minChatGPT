@@ -17,14 +17,15 @@ class Trainer:
         pass
 
 
-class RMTrainer(Trainer):
+class RewardModelTrainer(Trainer):
 
-    def __init__(self, device, model: nn.Module, train_dataset,
-                 test_dataset) -> None:
+    def __init__(self, device, model: nn.Module, train_dataset, test_dataset,
+                 total_epochs) -> None:
         super().__init__()
         self.run_name = int(time.time())
         self.device = device
-        self.total_epochs = 6
+        assert self.device == 'cuda'
+        self.total_epochs = total_epochs
         self.eval_freq = 1
         self.model = model
         self.train_dataloader = DataLoader(train_dataset,
@@ -36,11 +37,14 @@ class RMTrainer(Trainer):
         self.model = model
         self.criterion = KPairwiseLoss()
         self.optimizer = optim.Adam(self.model.parameters(), lr=0.0001)
+        self.grad_clip = 1.0
+        self.dtype = torch.float16
 
     def fit(self):
+        self.model = torch.compile(self.model)
         self.model.to(self.device)
         writer = SummaryWriter(f'./logs/{self.run_name}', max_queue=20)
-        scaler = GradScaler()
+        scaler = GradScaler(enabled=self.dtype != torch.float32)
 
         for epoch in range(self.total_epochs):
             losses = []
@@ -51,9 +55,9 @@ class RMTrainer(Trainer):
                 completions = completions.to(self.device)
                 attention_masks = attention_masks.to(self.device)
 
-                with torch.autocast(device_type=self.device,
-                                    dtype=torch.float16):
+                with torch.autocast(device_type=self.device, dtype=self.dtype):
                     # TODO: Support K completions instead of only 2
+                    # TODO: Support gradient accumulation
                     positive_scores = self.model(
                         completions[:, 0, :],
                         attention_masks[:, 0, :])    # (B, 1)
@@ -63,6 +67,11 @@ class RMTrainer(Trainer):
                     loss = self.criterion(
                         torch.cat((positive_scores, negative_scores),
                                   dim=-1))    # (B, 2)
+
+                if self.grad_clip != 0.0:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(),
+                                                   self.grad_clip)
+
                 scaler.scale(loss).backward()
                 scaler.step(self.optimizer)
                 scaler.update()

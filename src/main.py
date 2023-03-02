@@ -5,6 +5,7 @@ import tiktoken
 import click
 from torch.utils.data import DataLoader
 from trainers import RewardModelTrainer
+from torchinfo import summary
 
 
 @click.command()
@@ -66,15 +67,16 @@ def main(task):
             print(decode(y[0].tolist()))
             print('End---------------')
     elif task == "train_rm":
-        rm = GPTRewardModel.from_pretrained('gpt2-medium')
-        # rm = HFGPTRewardModel.from_pretrained('gpt2-medium')
+        rm = GPTRewardModel.from_pretrained('gpt2-xl')
+        rm.freeze_weights()
+        summary(rm, input_data=torch.ones(1, 1024).long())
         train_ds = AnthropicHHRLHFDataset(block_size=1024,
                                           split='train',
-                                          max_examples=20,
+                                          max_examples=None,
                                           tokenizer_name="tiktoken/gpt2")
         test_ds = AnthropicHHRLHFDataset(block_size=1024,
-                                         split='train',
-                                         max_examples=20,
+                                         split='test',
+                                         max_examples=None,
                                          tokenizer_name="tiktoken/gpt2")
         trainer = RewardModelTrainer(device,
                                      rm,

@@ -75,8 +75,6 @@ class AnthropicHHRLHFDataset(Dataset):
             negative_indices = negative["input_ids"]
             negative_mask = negative["attention_mask"]
 
-            print(positive_indices.dtype, positive_mask.dtype)
-
             self.pairs.append(
                 torch.stack((positive_indices, negative_indices), dim=0))
 

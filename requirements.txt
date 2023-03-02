@@ -61,6 +61,7 @@ tensorboard-data-server==0.7.0
 tensorboard-plugin-wit==1.8.1
 tiktoken==0.2.0
 tokenizers==0.13.2
+torchinfo==1.7.2
 torch==2.0.0.dev20230228+cu117
 torchaudio==2.0.0.dev20230301+cu117
 torchvision==0.15.0.dev20230227+cu117

@@ -3,4 +3,7 @@ nanoGPT/
 __pycache__/
 *keys.txt
 weights/
+.ipynb_checkpoints/
+del/
+nohup.out
 logs/

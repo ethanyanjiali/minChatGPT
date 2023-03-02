@@ -9,7 +9,9 @@ from tqdm import tqdm, trange
 import time
 from torch.utils.tensorboard import SummaryWriter
 import os
+# import bitsandbytes as bnb
 
+# torch.set_float32_matmul_precision('high')
 
 class Trainer:
 
@@ -26,14 +28,17 @@ class RewardModelTrainer(Trainer):
         self.device = device
         assert self.device == 'cuda'
         self.total_epochs = total_epochs
-        self.eval_freq = 1
+        self.eval_freq = 2
         self.model = model
         self.train_dataloader = DataLoader(train_dataset,
-                                           batch_size=1,
-                                           num_workers=6)
+                                           batch_size=4,
+                                           num_workers=8,
+                                           shuffle=True,
+                                           pin_memory=True)
         self.test_dataloader = DataLoader(test_dataset,
-                                          batch_size=1,
-                                          num_workers=6)
+                                          batch_size=4,
+                                          num_workers=8,
+                                          pin_memory=True)
         self.model = model
         self.criterion = KPairwiseLoss()
         self.optimizer = optim.Adam(self.model.parameters(), lr=0.0001)

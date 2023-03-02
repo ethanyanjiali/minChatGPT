@@ -388,11 +388,38 @@ class GPTRewardModel(nn.Module):
         hidden = self.backbone(x, attention_mask)
         score = self.value_head(hidden).mean(dim=1)
         return score
-
+    
+    def freeze_weights(self):
+        trainable_params = [
+            "backbone.transformer.decoder_blocks.35.mmsa.mask",
+            "backbone.transformer.decoder_blocks.35.mmsa.qkv_projection.weight",
+            "backbone.transformer.decoder_blocks.35.mmsa.qkv_projection.bias",
+            "backbone.transformer.decoder_blocks.35.mmsa.output_projection.weight",
+            "backbone.transformer.decoder_blocks.35.mmsa.output_projection.bias",
+            "backbone.transformer.decoder_blocks.35.ln2.weight",
+            "backbone.transformer.decoder_blocks.35.ln2.bias",
+            "backbone.transformer.decoder_blocks.35.ffn.fc1.weight",
+            "backbone.transformer.decoder_blocks.35.ffn.fc1.bias",
+            "backbone.transformer.decoder_blocks.35.ffn.fc2.weight",
+            "backbone.transformer.decoder_blocks.35.ffn.fc2.bias",
+            "backbone.transformer.ln.weight",
+            "backbone.transformer.ln.bias",
+            "value_head.weight"
+        ]
+        for name, param in self.named_parameters():
+            if name not in trainable_params:
+                param.requires_grad = False
+            else:
+                print(f"{name} is trainable.")
+        
     @classmethod
     def from_pretrained(cls, name):
         cfg = gpt_configs[name]
         model = GPTRewardModel(cfg)
         model.backbone = GPT.from_pretrained(name)
         model.backbone.lm_head = nn.Identity()
+        model_states_keys = model.state_dict().keys()
+        with open('rm_states_keys.txt', 'w') as fp:
+            for k in model_states_keys:
+                fp.write(k + '\n')
         return model

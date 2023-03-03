@@ -5,6 +5,7 @@ from torch import Tensor
 from torch.nn import functional as F
 from transformers import GPT2Model
 from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
+import loralib as lora
 
 # [1] Attention is all you need
 # [2] Improving Language Understanding by Generated Pre-Training
@@ -22,40 +23,62 @@ class GPTConfig:
     use_bias: bool
     block_size: int
     vocab_size: int
+    lora_rank: int = 0
 
 
-gpt_configs = {
-    "gpt2-medium":
-    GPTConfig(
-        n_layers=24,
-        n_heads=16,
-        embedding_dim=1024,
-        dropout_rate=0,
-        use_bias=True,
-        block_size=1024,
-        vocab_size=50257,
-    ),
-    'gpt2-large':
-    GPTConfig(
-        n_layers=36,
-        n_heads=20,
-        embedding_dim=1280,
-        dropout_rate=0,
-        use_bias=True,
-        block_size=1024,
-        vocab_size=50257,
-    ),
-    "gpt2-xl":
-    GPTConfig(
-        n_layers=48,
-        n_heads=25,
-        embedding_dim=1600,
-        dropout_rate=0,
-        use_bias=True,
-        block_size=1024,
-        vocab_size=50257,
-    )
-}
+def get_configs(name):
+    if name == "gpt2-medium":
+        return GPTConfig(
+            n_layers=24,
+            n_heads=16,
+            embedding_dim=1024,
+            dropout_rate=0,
+            use_bias=True,
+            block_size=1024,
+            vocab_size=50257,
+        )
+    elif name == 'gpt2-large':
+        return GPTConfig(
+            n_layers=36,
+            n_heads=20,
+            embedding_dim=1280,
+            dropout_rate=0,
+            use_bias=True,
+            block_size=1024,
+            vocab_size=50257,
+        )
+    elif name == 'gpt2-large/lora':
+        return GPTConfig(
+            n_layers=36,
+            n_heads=20,
+            embedding_dim=1280,
+            dropout_rate=0,
+            use_bias=True,
+            block_size=1024,
+            vocab_size=50257,
+            lora_rank=1,
+        )
+    elif name == "gpt2-xl":
+        return GPTConfig(
+            n_layers=48,
+            n_heads=25,
+            embedding_dim=1600,
+            dropout_rate=0,
+            use_bias=True,
+            block_size=1024,
+            vocab_size=50257,
+        )
+    elif name == "gpt2-xl/lora":
+        return GPTConfig(
+            n_layers=48,
+            n_heads=25,
+            embedding_dim=1600,
+            dropout_rate=0,
+            use_bias=True,
+            block_size=1024,
+            vocab_size=50257,
+            lora_rank=1,
+        )
 
 
 class MaskedMultiheadSelfAttention(nn.Module):
@@ -64,12 +87,22 @@ class MaskedMultiheadSelfAttention(nn.Module):
         super().__init__()
         # Figure 2 in [1]
         self.cfg: GPTConfig = cfg
-        self.qkv_projection = nn.Linear(cfg.embedding_dim,
-                                        3 * cfg.embedding_dim,
-                                        bias=cfg.use_bias)
-        self.output_projection = nn.Linear(cfg.embedding_dim,
-                                           cfg.embedding_dim,
-                                           bias=cfg.use_bias)
+        if self.cfg.lora_rank > 0:
+            self.qkv_projection = lora.Linear(cfg.embedding_dim,
+                                              3 * cfg.embedding_dim,
+                                              bias=cfg.use_bias,
+                                              r=cfg.lora_rank)
+            self.output_projection = lora.Linear(cfg.embedding_dim,
+                                                 cfg.embedding_dim,
+                                                 bias=cfg.use_bias,
+                                                 r=cfg.lora_rank)
+        else:
+            self.qkv_projection = nn.Linear(cfg.embedding_dim,
+                                            3 * cfg.embedding_dim,
+                                            bias=cfg.use_bias)
+            self.output_projection = nn.Linear(cfg.embedding_dim,
+                                               cfg.embedding_dim,
+                                               bias=cfg.use_bias)
         self.attention_dropout = nn.Dropout(cfg.dropout_rate)
         self.output_dropout = nn.Dropout(cfg.dropout_rate)
 
@@ -149,12 +182,22 @@ class FeedForwardNetworks(nn.Module):
 
     def __init__(self, cfg: GPTConfig) -> None:
         super().__init__()
-        self.fc1 = nn.Linear(cfg.embedding_dim,
-                             4 * cfg.embedding_dim,
-                             bias=cfg.use_bias)
-        self.fc2 = nn.Linear(4 * cfg.embedding_dim,
-                             cfg.embedding_dim,
-                             bias=cfg.use_bias)
+        if cfg.lora_rank > 0:
+            self.fc1 = lora.Linear(cfg.embedding_dim,
+                                   4 * cfg.embedding_dim,
+                                   bias=cfg.use_bias,
+                                   r=cfg.lora_rank)
+            self.fc2 = lora.Linear(4 * cfg.embedding_dim,
+                                   cfg.embedding_dim,
+                                   bias=cfg.use_bias,
+                                   r=cfg.lora_rank)
+        else:
+            self.fc1 = nn.Linear(cfg.embedding_dim,
+                                 4 * cfg.embedding_dim,
+                                 bias=cfg.use_bias)
+            self.fc2 = nn.Linear(4 * cfg.embedding_dim,
+                                 cfg.embedding_dim,
+                                 bias=cfg.use_bias)
         self.dropout = nn.Dropout(cfg.dropout_rate)
 
     def gelu(self, x):
@@ -232,7 +275,15 @@ class GPT(nn.Module):
 
         self.transformer = TransformerDecoder(cfg)
         # Final linear layer as language model head w/o softmax
-        self.lm_head = nn.Linear(cfg.embedding_dim, cfg.vocab_size, bias=False)
+        if cfg.lora_rank > 0:
+            self.lm_head = lora.Linear(cfg.embedding_dim,
+                                       cfg.vocab_size,
+                                       bias=False,
+                                       r=cfg.lora_rank)
+        else:
+            self.lm_head = nn.Linear(cfg.embedding_dim,
+                                     cfg.vocab_size,
+                                     bias=False)
 
     def forward(self, x: Tensor, attention_mask: Tensor = None):
         """
@@ -279,18 +330,19 @@ class GPT(nn.Module):
                     return True
             return False
 
-        cfg = gpt_configs[name]
+        cfg = get_configs(name)
         model = GPT(cfg)
         model_states = model.state_dict()
         model_states_keys = [
             k for k in model_states.keys() if not k.endswith('.mmsa.mask')
         ]
+        model_states_keys = [k for k in model_states_keys if not 'lora' in k]
         with open('model_states_keys.txt', 'w') as fp:
             for k in model_states_keys:
                 fp.write(k + '\n')
 
         from transformers import GPT2LMHeadModel
-        model_pretrained = GPT2LMHeadModel.from_pretrained(name)
+        model_pretrained = GPT2LMHeadModel.from_pretrained(name.split('/')[0])
         pretrained_states = model_pretrained.state_dict()
 
         pretrained_states_keys = [
@@ -370,9 +422,9 @@ class HFGPTRewardModel(nn.Module):
 
     @classmethod
     def from_pretrained(cls, name):
-        cfg = gpt_configs[name]
+        cfg = get_configs(name)
         model = HFGPTRewardModel(cfg)
-        model.backbone = GPT2Model.from_pretrained(name)
+        model.backbone = GPT2Model.from_pretrained(name.split('/')[0])
         return model
 
 
@@ -380,41 +432,45 @@ class GPTRewardModel(nn.Module):
 
     def __init__(self, cfg: GPTConfig) -> None:
         super().__init__()
+        self.cfg = cfg
         self.backbone = GPT(cfg)
         self.backbone.lm_head = nn.Identity()
+        # no need for LoRA here as we won't have weights anyway
         self.value_head = nn.Linear(cfg.embedding_dim, 1, bias=False)
 
     def forward(self, x: Tensor, attention_mask: Tensor = None):
         hidden = self.backbone(x, attention_mask)
         score = self.value_head(hidden).mean(dim=1)
         return score
-    
+
     def freeze_weights(self):
-        trainable_params = [
-            "backbone.transformer.decoder_blocks.35.mmsa.mask",
-            "backbone.transformer.decoder_blocks.35.mmsa.qkv_projection.weight",
-            "backbone.transformer.decoder_blocks.35.mmsa.qkv_projection.bias",
-            "backbone.transformer.decoder_blocks.35.mmsa.output_projection.weight",
-            "backbone.transformer.decoder_blocks.35.mmsa.output_projection.bias",
-            "backbone.transformer.decoder_blocks.35.ln2.weight",
-            "backbone.transformer.decoder_blocks.35.ln2.bias",
-            "backbone.transformer.decoder_blocks.35.ffn.fc1.weight",
-            "backbone.transformer.decoder_blocks.35.ffn.fc1.bias",
-            "backbone.transformer.decoder_blocks.35.ffn.fc2.weight",
-            "backbone.transformer.decoder_blocks.35.ffn.fc2.bias",
-            "backbone.transformer.ln.weight",
-            "backbone.transformer.ln.bias",
-            "value_head.weight"
-        ]
-        for name, param in self.named_parameters():
-            if name not in trainable_params:
-                param.requires_grad = False
-            else:
-                print(f"{name} is trainable.")
-        
+        if self.cfg.lora_rank > 0:
+            lora.mark_only_lora_as_trainable(self)
+        else:
+            trainable_params = [
+                "backbone.transformer.decoder_blocks.35.mmsa.mask",
+                "backbone.transformer.decoder_blocks.35.mmsa.qkv_projection.weight",
+                "backbone.transformer.decoder_blocks.35.mmsa.qkv_projection.bias",
+                "backbone.transformer.decoder_blocks.35.mmsa.output_projection.weight",
+                "backbone.transformer.decoder_blocks.35.mmsa.output_projection.bias",
+                "backbone.transformer.decoder_blocks.35.ln2.weight",
+                "backbone.transformer.decoder_blocks.35.ln2.bias",
+                "backbone.transformer.decoder_blocks.35.ffn.fc1.weight",
+                "backbone.transformer.decoder_blocks.35.ffn.fc1.bias",
+                "backbone.transformer.decoder_blocks.35.ffn.fc2.weight",
+                "backbone.transformer.decoder_blocks.35.ffn.fc2.bias",
+                "backbone.transformer.ln.weight",
+                "backbone.transformer.ln.bias", "value_head.weight"
+            ]
+            for name, param in self.named_parameters():
+                if name not in trainable_params:
+                    param.requires_grad = False
+                else:
+                    print(f"{name} is trainable.")
+
     @classmethod
     def from_pretrained(cls, name):
-        cfg = gpt_configs[name]
+        cfg = get_configs(name)
         model = GPTRewardModel(cfg)
         model.backbone = GPT.from_pretrained(name)
         model.backbone.lm_head = nn.Identity()

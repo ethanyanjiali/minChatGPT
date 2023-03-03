@@ -3,6 +3,7 @@ from datasets import load_dataset
 import tiktoken
 from transformers import GPT2Tokenizer, GPT2TokenizerFast
 import torch
+from tqdm import tqdm
 
 
 class TiktokenTokenizer():
@@ -32,6 +33,66 @@ class TiktokenTokenizer():
             mask = torch.tensor(mask)
 
         return {"input_ids": ids, "attention_mask": mask}
+
+
+class DahoasRMStaticDataset(Dataset):
+    """
+    https://huggingface.co/datasets/Dahoas/rm-static
+    """
+
+    def __init__(self,
+                 block_size,
+                 split='train',
+                 max_examples=None,
+                 tokenizer_name='tiktoken/gpt2') -> None:
+        super().__init__()
+        dataset = load_dataset("Dahoas/rm-static", split=split)
+        self.pairs = []
+        self.masks = []
+
+        if tokenizer_name == "huggingface/gpt2":
+            tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+            tokenizer.pad_token = tokenizer.eos_token
+        elif tokenizer_name == "huggingface/gpt2fast":
+            tokenizer = GPT2TokenizerFast.from_pretrained('gpt2')
+        elif tokenizer_name == "tiktoken/gpt2":
+            tokenizer = TiktokenTokenizer('gpt2')
+
+        cnt = 0
+        for data in tqdm(dataset):
+            prompt = data['prompt']
+
+            positive_text = prompt + data['chosen'] + "<|endoftext|>"
+            positive = tokenizer(positive_text,
+                                 max_length=block_size,
+                                 padding="max_length",
+                                 truncation=True,
+                                 return_tensors="pt")
+
+            negative_text = prompt + data['rejected'] + "<|endoftext|>"
+            negative = tokenizer(negative_text,
+                                 max_length=block_size,
+                                 padding="max_length",
+                                 truncation=True,
+                                 return_tensors="pt")
+
+            self.pairs.append(
+                torch.stack((positive['input_ids'], negative['input_ids']),
+                            dim=0))
+
+            self.masks.append(
+                torch.stack(
+                    (positive['attention_mask'], negative['attention_mask']),
+                    dim=0))
+            cnt += 1
+            if max_examples and cnt >= max_examples:
+                break
+
+    def __len__(self):
+        return len(self.pairs)
+
+    def __getitem__(self, idx):
+        return self.pairs[idx], self.masks[idx]    # (2, T), (2, T)
 
 
 class AnthropicHHRLHFDataset(Dataset):

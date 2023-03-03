@@ -1,5 +1,5 @@
 from models import GPT, GPTRewardModel, HFGPTRewardModel
-from dataset import AnthropicHHRLHFDataset
+from dataset import AnthropicHHRLHFDataset, DahoasRMStaticDataset
 import torch
 import tiktoken
 import click
@@ -66,24 +66,97 @@ def main(task):
                                top_k=top_k)
             print(decode(y[0].tolist()))
             print('End---------------')
+    # elif task == "sft":
+    # rm = GPTRewardModel.from_pretrained('gpt2-xl/lora')
+    # rm.freeze_weights()
+    # summary(rm, input_data=torch.ones(1, 1024).long())
+    # train_ds = DahoasRMStaticDataset(block_size=1024,
+    #                                  split='train',
+    #                                  max_examples=10,
+    #                                  tokenizer_name="tiktoken/gpt2")
+    # test_ds = DahoasRMStaticDataset(block_size=1024,
+    #                                 split='test',
+    #                                 max_examples=10,
+    #                                 tokenizer_name="tiktoken/gpt2")
+    # train_ds = AnthropicHHRLHFDataset(block_size=1024,
+    #                                   split='train',
+    #                                   max_examples=None,
+    #                                   tokenizer_name="tiktoken/gpt2")
+    # test_ds = AnthropicHHRLHFDataset(block_size=1024,
+    #                                  split='test',
+    #                                  max_examples=None,
+    #                                  tokenizer_name="tiktoken/gpt2")
+    # trainer = RewardModelTrainer(device,
+    #                              rm,
+    #                              train_ds,
+    #                              test_ds,
+    #                              total_epochs=10)
+    # trainer.fit()
     elif task == "train_rm":
-        rm = GPTRewardModel.from_pretrained('gpt2-xl')
+        rm = GPTRewardModel.from_pretrained('gpt2-large/lora')
+        # from models import get_configs
+        # rm = GPTRewardModel(get_configs('gpt2-xl/lora'))
         rm.freeze_weights()
         summary(rm, input_data=torch.ones(1, 1024).long())
-        train_ds = AnthropicHHRLHFDataset(block_size=1024,
-                                          split='train',
-                                          max_examples=None,
-                                          tokenizer_name="tiktoken/gpt2")
-        test_ds = AnthropicHHRLHFDataset(block_size=1024,
-                                         split='test',
+        train_ds = DahoasRMStaticDataset(block_size=1024,
+                                         split='train',
                                          max_examples=None,
                                          tokenizer_name="tiktoken/gpt2")
+        test_ds = DahoasRMStaticDataset(block_size=1024,
+                                        split='test',
+                                        max_examples=None,
+                                        tokenizer_name="tiktoken/gpt2")
+        # train_ds = AnthropicHHRLHFDataset(block_size=1024,
+        #                                   split='train',
+        #                                   max_examples=None,
+        #                                   tokenizer_name="tiktoken/gpt2")
+        # test_ds = AnthropicHHRLHFDataset(block_size=1024,
+        #                                  split='test',
+        #                                  max_examples=None,
+        #                                  tokenizer_name="tiktoken/gpt2")
         trainer = RewardModelTrainer(device,
                                      rm,
                                      train_ds,
                                      test_ds,
+                                     batch_size=1,
                                      total_epochs=10)
         trainer.fit()
+    elif task == "test_loss":
+        from loss import KPairwiseLoss
+        loss_func = KPairwiseLoss()
+        scores = torch.tensor([[0.8, 0.4], [0.5, 0.6]])
+        loss = loss_func(scores)
+        print(loss)
+    elif task == "test_tokenizer":
+        from dataset import TiktokenTokenizer
+        from transformers import GPT2Tokenizer, GPT2TokenizerFast
+        tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+        tokenizer.pad_token = tokenizer.eos_token
+        print(tokenizer.pad_token)
+        print(
+            tokenizer("How are you?<|endoftext|>",
+                      max_length=20,
+                      padding="max_length",
+                      truncation=True,
+                      return_tensors="pt"))
+        tokenizer = GPT2TokenizerFast.from_pretrained('gpt2')
+        tokenizer.pad_token = tokenizer.eos_token
+        print(tokenizer.pad_token)
+        print(
+            tokenizer("How are you?",
+                      max_length=20,
+                      padding="max_length",
+                      truncation=True,
+                      return_tensors="pt"))
+
+        tokenizer = TiktokenTokenizer('gpt2')
+        print(tokenizer.pad_token)
+        print(
+            tokenizer("How are you?",
+                      max_length=20,
+                      padding="max_length",
+                      truncation=True,
+                      return_tensors="pt"))
 
 
 if __name__ == "__main__":

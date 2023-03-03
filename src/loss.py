@@ -27,5 +27,6 @@ class KPairwiseLoss(nn.Module):
         log_odds = torch.tril(torch.log(torch.sigmoid(minuend - subtrahend)),
                               -1)    # (B, C, C)
         total_comparision = math.comb(C, 2)
-        loss = -(1 / total_comparision) * torch.mean(log_odds)
+        expectation = torch.sum(log_odds, dim=(1, 2)) / total_comparision
+        loss = -(1 / total_comparision) * expectation.mean()
         return loss

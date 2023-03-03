@@ -93,7 +93,8 @@ def main(task):
     #                              total_epochs=10)
     # trainer.fit()
     elif task == "train_rm":
-        rm = GPTRewardModel.from_pretrained('gpt2-large/lora')
+        model_name = 'gpt2-large/lora'
+        rm = GPTRewardModel.from_pretrained(model_name)
         # from models import get_configs
         # rm = GPTRewardModel(get_configs('gpt2-xl/lora'))
         rm.freeze_weights()
@@ -114,12 +115,16 @@ def main(task):
         #                                  split='test',
         #                                  max_examples=None,
         #                                  tokenizer_name="tiktoken/gpt2")
-        trainer = RewardModelTrainer(device,
-                                     rm,
-                                     train_ds,
-                                     test_ds,
-                                     batch_size=1,
-                                     total_epochs=10)
+        trainer = RewardModelTrainer(
+            device,
+            rm,
+            train_ds,
+            test_ds,
+            batch_size=1,
+            total_epochs=1,
+            name=model_name,
+        )
+
         trainer.fit()
     elif task == "test_loss":
         from loss import KPairwiseLoss

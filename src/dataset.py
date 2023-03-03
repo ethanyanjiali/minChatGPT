@@ -60,6 +60,7 @@ class DahoasRMStaticDataset(Dataset):
 
         cnt = 0
         for data in tqdm(dataset):
+            cnt += 1
             prompt = data['prompt']
 
             positive_text = prompt + data['chosen'] + "<|endoftext|>"
@@ -84,7 +85,6 @@ class DahoasRMStaticDataset(Dataset):
                 torch.stack(
                     (positive['attention_mask'], negative['attention_mask']),
                     dim=0))
-            cnt += 1
             if max_examples and cnt >= max_examples:
                 break
 

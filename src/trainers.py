@@ -9,6 +9,7 @@ from tqdm import tqdm, trange
 import time
 from torch.utils.tensorboard import SummaryWriter
 import os
+import json
 # import bitsandbytes as bnb
 
 # torch.set_float32_matmul_precision('high')
@@ -146,13 +147,14 @@ class SFTTrainer(Trainer):
 class RewardModelTrainer(Trainer):
 
     def __init__(self, device, model: nn.Module, train_dataset, test_dataset,
-                 total_epochs, batch_size) -> None:
+                 total_epochs, batch_size, name) -> None:
         super().__init__()
         self.run_name = int(time.time())
         self.device = device
         assert self.device == 'cuda'
         self.total_epochs = total_epochs
         self.eval_freq = 1
+        self.save_freq = 20000
         self.model = model
         self.train_dataloader = DataLoader(train_dataset,
                                            batch_size=batch_size,
@@ -165,14 +167,40 @@ class RewardModelTrainer(Trainer):
                                           pin_memory=True)
         self.model = model
         self.criterion = KPairwiseLoss()
-        self.optimizer = optim.Adam(self.model.parameters(), lr=0.0001)
+
+        lr = 0.0001
+        self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
         self.grad_clip = 1.0
         self.dtype = torch.float16
+
+        hp = {
+            "grad_clip": self.grad_clip,
+            "learning_rate": lr,
+            "dtype": str(self.dtype),
+            "batch_size": batch_size,
+            "model": name,
+            "lora_rank": model.cfg.lora_rank,
+            "block_size": model.cfg.block_size,
+        }
+        if not os.path.exists(f'./runs/{self.run_name}'):
+            os.makedirs(f'./runs/{self.run_name}')
+
+        with open(f'./runs/{self.run_name}/hyperparams.json', 'w') as fp:
+            json.dump(hp, fp, indent=4)
+
+    def save_states(self, step, is_last=False):
+        file_name = f'{self.run_name}_final.pt' if is_last else f'{self.run_name}_step{step}.pt'
+        torch.save(
+            {
+                'step': step,
+                'model_state_dict': self.model.state_dict(),
+                'optimizer_state_dict': self.optimizer.state_dict(),
+            }, f'./runs/{self.run_name}/{file_name}')
 
     def fit(self):
         self.model = torch.compile(self.model)
         self.model.to(self.device)
-        writer = SummaryWriter(f'./logs/{self.run_name}', max_queue=20)
+        writer = SummaryWriter(f'./runs/logs/{self.run_name}', max_queue=20)
         scaler = GradScaler(enabled=self.dtype != torch.float32)
 
         for epoch in range(self.total_epochs):
@@ -180,7 +208,7 @@ class RewardModelTrainer(Trainer):
             self.model.train()
             for step, (completions, attention_masks) in enumerate(
                     pbar := tqdm(self.train_dataloader)):
-
+                total_steps = step + epoch * len(self.train_dataloader)
                 completions = completions.to(self.device)
                 attention_masks = attention_masks.to(self.device)
 
@@ -206,14 +234,15 @@ class RewardModelTrainer(Trainer):
                 scaler.update()
                 self.optimizer.zero_grad(set_to_none=True)
                 lossf = loss.item()
-                writer.add_scalar('Loss/train/step', lossf,
-                                  step + epoch * len(self.train_dataloader))
+                writer.add_scalar('Loss/train/step', lossf, total_steps)
                 losses.append(lossf)
 
                 pbar.set_description(
                     f"batch loss {round(lossf,3)}, avg loss {round(statistics.mean(losses),3)}, "
                 )
-                # print(f'Step: {step+1}, Loss: {loss}')
+
+                if total_steps % self.save_freq == 0:
+                    self.save_states(total_steps)
 
             epoch_loss = statistics.mean(losses)
             writer.add_scalar('Loss/train/epoch', epoch_loss, epoch)
@@ -255,12 +284,4 @@ class RewardModelTrainer(Trainer):
                 writer.add_scalar('Acc/test/epoch', acc, epoch)
                 print(f'Epoch: {epoch+1}, Test Loss: {lossf}, Acc: {acc}')
 
-                if not os.path.exists('./weights/'):
-                    os.makedirs('./weights')
-                    torch.save(
-                        {
-                            'epoch': epoch,
-                            'model_state_dict': self.model.state_dict(),
-                            'optimizer_state_dict':
-                            self.optimizer.state_dict(),
-                        }, f'./weights/{self.run_name}_epoch{epoch}.pt')
+        self.save_states(total_steps, True)

@@ -1,9 +1,10 @@
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, IterableDataset
 from datasets import load_dataset
 import tiktoken
 from transformers import GPT2Tokenizer, GPT2TokenizerFast
 import torch
 from tqdm import tqdm
+import random
 
 
 class TiktokenTokenizer():
@@ -16,7 +17,7 @@ class TiktokenTokenizer():
 
     def __call__(self,
                  text,
-                 max_length,
+                 max_length=None,
                  padding="max_length",
                  truncation=True,
                  return_tensors="pt"):
@@ -33,6 +34,50 @@ class TiktokenTokenizer():
             mask = torch.tensor(mask)
 
         return {"input_ids": ids, "attention_mask": mask}
+
+
+class DahoasSFTStaticDataset(IterableDataset):
+    """
+    https://huggingface.co/datasets/Dahoas/sft-static
+    """
+
+    def __init__(self,
+                 block_size,
+                 split='train',
+                 max_examples=None,
+                 tokenizer_name='tiktoken/gpt2') -> None:
+        super().__init__()
+        dataset = load_dataset("Dahoas/sft-static", split=split)
+        self.tokens = []
+        self.block_size = block_size
+
+        if tokenizer_name == "huggingface/gpt2":
+            tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+            tokenizer.pad_token = tokenizer.eos_token
+        elif tokenizer_name == "huggingface/gpt2fast":
+            tokenizer = GPT2TokenizerFast.from_pretrained('gpt2')
+        elif tokenizer_name == "tiktoken/gpt2":
+            tokenizer = TiktokenTokenizer('gpt2')
+
+        cnt = 0
+        for data in tqdm(dataset):
+            cnt += 1
+            prompt = data['prompt']
+
+            response_text += prompt + data['response'] + "<|endoftext|>"
+            response = tokenizer(response_text)
+
+            self.tokens += response['input_ids']
+            if max_examples and cnt >= max_examples:
+                break
+
+        self.tokens = torch.tensor(self.tokens, dtype=torch.long)
+
+    def __iter__(self):
+        start = random.randint(0, len(self.tokens) - self.block_size - 2)
+        x = self.tokens[start:start + self.block_size]
+        y = self.tokens[start + 1:start + self.block_size + 1]
+        yield x, y
 
 
 class DahoasRMStaticDataset(Dataset):

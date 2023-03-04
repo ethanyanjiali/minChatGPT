@@ -95,8 +95,6 @@ def main(task):
     elif task == "train_rm":
         model_name = 'gpt2-xl/lora'
         rm = GPTRewardModel.from_pretrained(model_name)
-        # from models import get_configs
-        # rm = GPTRewardModel(get_configs('gpt2-xl/lora'))
         rm.freeze_weights()
         summary(rm, input_data=torch.ones(1, 1024).long())
         train_ds = DahoasRMStaticDataset(block_size=1024,
@@ -107,14 +105,6 @@ def main(task):
                                         split='test',
                                         max_examples=None,
                                         tokenizer_name="tiktoken/gpt2")
-        # train_ds = AnthropicHHRLHFDataset(block_size=1024,
-        #                                   split='train',
-        #                                   max_examples=None,
-        #                                   tokenizer_name="tiktoken/gpt2")
-        # test_ds = AnthropicHHRLHFDataset(block_size=1024,
-        #                                  split='test',
-        #                                  max_examples=None,
-        #                                  tokenizer_name="tiktoken/gpt2")
         trainer = RewardModelTrainer(
             device,
             rm,

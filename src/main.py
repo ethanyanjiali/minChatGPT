@@ -93,7 +93,7 @@ def main(task):
     #                              total_epochs=10)
     # trainer.fit()
     elif task == "train_rm":
-        model_name = 'gpt2-large/lora'
+        model_name = 'gpt2-xl/lora'
         rm = GPTRewardModel.from_pretrained(model_name)
         # from models import get_configs
         # rm = GPTRewardModel(get_configs('gpt2-xl/lora'))

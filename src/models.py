@@ -300,9 +300,8 @@ class GPT(nn.Module):
         """
         x: Shape of (B, T)
         """
-        x = self.transformer(x, attention_mask)
-        logits = self.lm_head(x)
-
+        x = self.transformer(x, attention_mask)    # x = (B, T, embedding_dim)
+        logits = self.lm_head(x)    # logits = (B, T, voca_size)
         return logits
 
     @classmethod

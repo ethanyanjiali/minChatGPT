@@ -8,3 +8,5 @@ del/
 nohup.out
 logs/
 runs/
+*.json
+ds/

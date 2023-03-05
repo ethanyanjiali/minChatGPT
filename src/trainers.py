@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
-from loss import KPairwiseLoss
+from loss import KPairwiseLoss, CrossEntropyLoss
 import torch.optim as optim
 from torch.cuda.amp.grad_scaler import GradScaler
 import statistics
@@ -10,6 +10,7 @@ import time
 from torch.utils.tensorboard import SummaryWriter
 import os
 import json
+import random
 # import bitsandbytes as bnb
 
 # torch.set_float32_matmul_precision('high')
@@ -21,6 +22,7 @@ class Trainer:
         self.model = None
         self.optimizer = None
         self.run_name = int(time.time())
+        random.seed(1)
 
     def save_hyperparams(self, hp):
         if not os.path.exists(f'./runs/{self.run_name}'):
@@ -42,30 +44,34 @@ class Trainer:
 class SFTTrainer(Trainer):
 
     def __init__(self, device, model: nn.Module, train_dataset, test_dataset,
-                 max_steps, batch_size, name) -> None:
+                 batch_size, max_steps, name, finetune) -> None:
         super().__init__()
         self.device = device
         assert self.device == 'cuda'
         self.max_steps = max_steps
         self.eval_freq = 1
-        self.save_freq = 20000
+        self.save_freq = 50000
         self.model = model
-        self.train_dataloader = DataLoader(train_dataset,
-                                           batch_size=batch_size,
-                                           num_workers=8,
-                                           shuffle=True,
-                                           pin_memory=True)
-        self.test_dataloader = DataLoader(test_dataset,
-                                          batch_size=batch_size,
-                                          num_workers=8,
-                                          pin_memory=True)
+        self.train_dataloader = iter(
+            DataLoader(train_dataset,
+                       batch_size=batch_size,
+                       num_workers=6,
+                       pin_memory=True))
+        self.test_dataloader = iter(
+            DataLoader(test_dataset,
+                       batch_size=batch_size,
+                       num_workers=6,
+                       pin_memory=True))
         self.model = model
-        self.criterion = KPairwiseLoss()
+        self.criterion = CrossEntropyLoss()
 
         lr = 0.0001
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
         self.grad_clip = 1.0
         self.dtype = torch.float16
+
+        if finetune:
+            self.model.freeze_weights()
 
         hp = {
             "grad_clip": self.grad_clip,
@@ -75,6 +81,8 @@ class SFTTrainer(Trainer):
             "model": name,
             "lora_rank": model.cfg.lora_rank,
             "block_size": model.cfg.block_size,
+            "finetune": finetune,
+            "dropout": model.cfg.dropout_rate
         }
         self.save_hyperparams(hp)
 
@@ -86,15 +94,16 @@ class SFTTrainer(Trainer):
 
         self.model.train()
         step = 0
+
         while step < self.max_steps:
             x, y = next(self.train_dataloader)
             x = x.to(self.device)
             y = y.to(self.device)
-            attention_masks = attention_masks.to(self.device)
 
             with torch.autocast(device_type=self.device, dtype=self.dtype):
-                y_hat = self.model(x, attention_masks)    # (B, 1)
-                loss = self.criterion(y_hat, y)    # (B, 2)
+
+                y_hat = self.model(x)    # (B, 1)
+                loss = self.criterion(y_hat, y)    # (B, 1)
 
             if self.grad_clip != 0.0:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(),
@@ -131,7 +140,7 @@ class RewardModelTrainer(Trainer):
         assert self.device == 'cuda'
         self.total_epochs = total_epochs
         self.eval_freq = 1
-        self.save_freq = 20000
+        self.save_freq = 30000
         self.model = model
         self.train_dataloader = DataLoader(train_dataset,
                                            batch_size=batch_size,

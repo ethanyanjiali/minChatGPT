@@ -1,10 +1,11 @@
 from torch.utils.data import Dataset, IterableDataset
-from datasets import load_dataset
+from datasets import load_dataset, Features
 import tiktoken
 from transformers import GPT2Tokenizer, GPT2TokenizerFast
 import torch
 from tqdm import tqdm
 import random
+import json
 
 
 class TiktokenTokenizer():
@@ -18,9 +19,9 @@ class TiktokenTokenizer():
     def __call__(self,
                  text,
                  max_length=None,
-                 padding="max_length",
-                 truncation=True,
-                 return_tensors="pt"):
+                 padding=None,
+                 truncation=False,
+                 return_tensors=None):
         ids = self.encode(text)
         if truncation:
             ids = ids[:max_length]
@@ -36,6 +37,53 @@ class TiktokenTokenizer():
         return {"input_ids": ids, "attention_mask": mask}
 
 
+class EYLSFTStaticDataset(Dataset):
+
+    def __init__(self,
+                 block_size,
+                 split='train',
+                 max_examples=None,
+                 tokenizer_name='tiktoken/gpt2') -> None:
+        super().__init__()
+        if split == "train":
+            with open("/home/yanjia/Code/minChatGPT/src/sft_train.json") as fp:
+                dataset = json.load(fp)
+        else:
+            with open("/home/yanjia/Code/minChatGPT/src/sft_test.json") as fp:
+                dataset = json.load(fp)
+        self.tokens = []
+        self.block_size = block_size
+        if tokenizer_name == "huggingface/gpt2":
+            tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+            tokenizer.pad_token = tokenizer.eos_token
+        elif tokenizer_name == "huggingface/gpt2fast":
+            tokenizer = GPT2TokenizerFast.from_pretrained('gpt2')
+        elif tokenizer_name == "tiktoken/gpt2":
+            tokenizer = TiktokenTokenizer('gpt2')
+
+        cnt = 0
+        for chosen in tqdm(dataset):
+            cnt += 1
+            response_text = chosen + "<|endoftext|>"
+            response = tokenizer(response_text)
+
+            self.tokens += response['input_ids']
+            if max_examples and cnt >= max_examples:
+                break
+
+        self.tokens = torch.tensor(self.tokens, dtype=torch.long)
+
+    def __len__(self):
+        import sys
+        return sys.maxsize
+
+    def __getitem__(self, idx):
+        start = random.randint(0, len(self.tokens) - self.block_size - 2)
+        x = self.tokens[start:start + self.block_size]
+        y = self.tokens[start + 1:start + self.block_size + 1]
+        return x, y
+
+
 class DahoasSFTStaticDataset(IterableDataset):
     """
     https://huggingface.co/datasets/Dahoas/sft-static
@@ -47,7 +95,10 @@ class DahoasSFTStaticDataset(IterableDataset):
                  max_examples=None,
                  tokenizer_name='tiktoken/gpt2') -> None:
         super().__init__()
-        dataset = load_dataset("Dahoas/sft-static", split=split)
+        dataset = load_dataset(
+            "Dahoas/sft-static",
+            revision="90e35d9cd625075f1224c4241734716ec9f0db78",
+            split=split)
         self.tokens = []
         self.block_size = block_size
 
@@ -133,6 +184,15 @@ class DahoasRMStaticDataset(Dataset):
             if max_examples and cnt >= max_examples:
                 break
 
+    @classmethod
+    def save(cls, split, fp):
+        dataset = load_dataset("Dahoas/rm-static", split=split)
+        examples = []
+        for data in tqdm(dataset):
+            examples.append(data["prompt"] + data["chosen"])
+        import json
+        json.dump(examples, fp)
+
     def __len__(self):
         return len(self.pairs)
 
@@ -189,6 +249,15 @@ class AnthropicHHRLHFDataset(Dataset):
             cnt += 1
             if max_examples and cnt >= max_examples:
                 break
+
+    @classmethod
+    def save(cls, split, fp):
+        dataset = load_dataset("Anthropic/hh-rlhf", split=split)
+        examples = []
+        for data in tqdm(dataset):
+            examples.append(data["chosen"])
+        import json
+        json.dump(examples, fp)
 
     def __len__(self):
         return len(self.pairs)

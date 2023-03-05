@@ -1,10 +1,10 @@
 from models import GPT, GPTRewardModel, HFGPTRewardModel
-from dataset import AnthropicHHRLHFDataset, DahoasRMStaticDataset
+from dataset import AnthropicHHRLHFDataset, DahoasRMStaticDataset, DahoasSFTStaticDataset, EYLSFTStaticDataset
 import torch
 import tiktoken
 import click
 from torch.utils.data import DataLoader
-from trainers import RewardModelTrainer
+from trainers import RewardModelTrainer, SFTTrainer
 from torchinfo import summary
 
 
@@ -66,34 +66,29 @@ def main(task):
                                top_k=top_k)
             print(decode(y[0].tolist()))
             print('End---------------')
-    # elif task == "sft":
-    # rm = GPTRewardModel.from_pretrained('gpt2-xl/lora')
-    # rm.freeze_weights()
-    # summary(rm, input_data=torch.ones(1, 1024).long())
-    # train_ds = DahoasRMStaticDataset(block_size=1024,
-    #                                  split='train',
-    #                                  max_examples=10,
-    #                                  tokenizer_name="tiktoken/gpt2")
-    # test_ds = DahoasRMStaticDataset(block_size=1024,
-    #                                 split='test',
-    #                                 max_examples=10,
-    #                                 tokenizer_name="tiktoken/gpt2")
-    # train_ds = AnthropicHHRLHFDataset(block_size=1024,
-    #                                   split='train',
-    #                                   max_examples=None,
-    #                                   tokenizer_name="tiktoken/gpt2")
-    # test_ds = AnthropicHHRLHFDataset(block_size=1024,
-    #                                  split='test',
-    #                                  max_examples=None,
-    #                                  tokenizer_name="tiktoken/gpt2")
-    # trainer = RewardModelTrainer(device,
-    #                              rm,
-    #                              train_ds,
-    #                              test_ds,
-    #                              total_epochs=10)
-    # trainer.fit()
+    elif task == "sft":
+        model_name = 'gpt2-medium'
+        model = GPT.from_pretrained(model_name)
+        summary(model, input_data=torch.ones(1, 1024).long())
+        train_ds = EYLSFTStaticDataset(block_size=1024,
+                                       split='train',
+                                       max_examples=None,
+                                       tokenizer_name="tiktoken/gpt2")
+        test_ds = EYLSFTStaticDataset(block_size=1024,
+                                      split='test',
+                                      max_examples=None,
+                                      tokenizer_name="tiktoken/gpt2")
+        trainer = SFTTrainer(device,
+                             model,
+                             train_ds,
+                             test_ds,
+                             batch_size=4,
+                             max_steps=300000,
+                             name=model_name,
+                             finetune=False)
+        trainer.fit()
     elif task == "train_rm":
-        model_name = 'gpt2-medium/lora'
+        model_name = 'gpt2-large/lora'
         rm = GPTRewardModel.from_pretrained(model_name)
         summary(rm, input_data=torch.ones(1, 1024).long())
         train_ds = DahoasRMStaticDataset(block_size=1024,

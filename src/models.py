@@ -37,6 +37,17 @@ def get_configs(name):
             block_size=1024,
             vocab_size=50257,
         )
+    if name == "gpt2-medium/lora":
+        return GPTConfig(
+            n_layers=24,
+            n_heads=16,
+            embedding_dim=1024,
+            dropout_rate=0,
+            use_bias=True,
+            block_size=1024,
+            vocab_size=50257,
+            lora_rank=1,
+        )
     elif name == 'gpt2-large':
         return GPTConfig(
             n_layers=36,

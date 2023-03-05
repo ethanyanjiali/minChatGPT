@@ -48,7 +48,7 @@ class SFTTrainer(Trainer):
         assert self.device == 'cuda'
         self.max_steps = max_steps
         self.eval_freq = 1
-        self.save_freq = 10000
+        self.save_freq = 20000
         self.model = model
         self.train_dataloader = DataLoader(train_dataset,
                                            batch_size=batch_size,
@@ -117,14 +117,21 @@ class SFTTrainer(Trainer):
 
 class RewardModelTrainer(Trainer):
 
-    def __init__(self, device, model: nn.Module, train_dataset, test_dataset,
-                 total_epochs, batch_size, name) -> None:
+    def __init__(self,
+                 device,
+                 model: nn.Module,
+                 train_dataset,
+                 test_dataset,
+                 total_epochs,
+                 batch_size,
+                 name,
+                 finetune=False) -> None:
         super().__init__()
         self.device = device
         assert self.device == 'cuda'
         self.total_epochs = total_epochs
         self.eval_freq = 1
-        self.save_freq = 10000
+        self.save_freq = 20000
         self.model = model
         self.train_dataloader = DataLoader(train_dataset,
                                            batch_size=batch_size,
@@ -142,6 +149,8 @@ class RewardModelTrainer(Trainer):
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
         self.grad_clip = 1.0
         self.dtype = torch.float16
+        if finetune:
+            self.model.freeze_weights()
 
         hp = {
             "grad_clip": self.grad_clip,
@@ -151,6 +160,8 @@ class RewardModelTrainer(Trainer):
             "model": name,
             "lora_rank": model.cfg.lora_rank,
             "block_size": model.cfg.block_size,
+            "finetune": finetune,
+            "dropout": model.cfg.dropout_rate
         }
         self.save_hyperparams(hp)
 

@@ -93,9 +93,8 @@ def main(task):
     #                              total_epochs=10)
     # trainer.fit()
     elif task == "train_rm":
-        model_name = 'gpt2-xl/lora'
+        model_name = 'gpt2-medium/lora'
         rm = GPTRewardModel.from_pretrained(model_name)
-        rm.freeze_weights()
         summary(rm, input_data=torch.ones(1, 1024).long())
         train_ds = DahoasRMStaticDataset(block_size=1024,
                                          split='train',
@@ -105,15 +104,14 @@ def main(task):
                                         split='test',
                                         max_examples=None,
                                         tokenizer_name="tiktoken/gpt2")
-        trainer = RewardModelTrainer(
-            device,
-            rm,
-            train_ds,
-            test_ds,
-            batch_size=1,
-            total_epochs=1,
-            name=model_name,
-        )
+        trainer = RewardModelTrainer(device,
+                                     rm,
+                                     train_ds,
+                                     test_ds,
+                                     batch_size=1,
+                                     total_epochs=1,
+                                     name=model_name,
+                                     finetune="lora")
 
         trainer.fit()
     elif task == "test_loss":

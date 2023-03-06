@@ -23,7 +23,10 @@ class GPTConfig:
     use_bias: bool
     block_size: int
     vocab_size: int
+    model_name: str
+    hf_model: str
     lora_rank: int = 0
+    pretrain: str = "huggingface"
 
 
 def get_configs(name):
@@ -36,8 +39,22 @@ def get_configs(name):
             use_bias=True,
             block_size=1024,
             vocab_size=50257,
+            model_name="gpt2-medium",
+            hf_model="gpt2-medium",
         )
-    if name == "gpt2-medium/lora":
+    elif name == "gpt2-medium/dropout":
+        return GPTConfig(
+            n_layers=24,
+            n_heads=16,
+            embedding_dim=1024,
+            dropout_rate=0.2,
+            use_bias=True,
+            block_size=1024,
+            vocab_size=50257,
+            model_name="gpt2-medium/dropout",
+            hf_model="gpt2-medium",
+        )
+    elif name == "gpt2-medium/lora":
         return GPTConfig(
             n_layers=24,
             n_heads=16,
@@ -47,6 +64,8 @@ def get_configs(name):
             block_size=1024,
             vocab_size=50257,
             lora_rank=1,
+            model_name="gpt2-medium/lora",
+            hf_model="gpt2-medium",
         )
     elif name == 'gpt2-large':
         return GPTConfig(
@@ -57,6 +76,8 @@ def get_configs(name):
             use_bias=True,
             block_size=1024,
             vocab_size=50257,
+            model_name="gpt2-large",
+            hf_model="gpt2-large",
         )
     elif name == 'gpt2-large/lora':
         return GPTConfig(
@@ -68,6 +89,8 @@ def get_configs(name):
             block_size=1024,
             vocab_size=50257,
             lora_rank=1,
+            model_name="gpt2-large/lora",
+            hf_model="gpt2-large",
         )
     elif name == "gpt2-xl":
         return GPTConfig(
@@ -78,6 +101,8 @@ def get_configs(name):
             use_bias=True,
             block_size=1024,
             vocab_size=50257,
+            model_name="gpt2-xl",
+            hf_model="gpt2-xl",
         )
     elif name == "gpt2-xl/lora":
         return GPTConfig(
@@ -89,6 +114,8 @@ def get_configs(name):
             block_size=1024,
             vocab_size=50257,
             lora_rank=1,
+            model_name="gpt2-xl/lora",
+            hf_model="gpt2-xl",
         )
 
 
@@ -305,7 +332,14 @@ class GPT(nn.Module):
         return logits
 
     @classmethod
-    def from_pretrained(cls, name='gpt2-xl'):
+    def from_checkpoint(cls, cfg: GPTConfig, ckpt_path: str):
+        model = GPT(cfg)
+        checkpoint = torch.load(ckpt_path, map_location="cpu")
+        model.load_state_dict(checkpoint["model_state_dict"], strict=False)
+        return model
+
+    @classmethod
+    def from_pretrained(cls, cfg: GPTConfig):
         """
         https://github.com/karpathy/nanoGPT/blob/master/model.py#L213
         """
@@ -340,7 +374,6 @@ class GPT(nn.Module):
                     return True
             return False
 
-        cfg = get_configs(name)
         model = GPT(cfg)
         model_states = model.state_dict()
         model_states_keys = [
@@ -352,7 +385,7 @@ class GPT(nn.Module):
                 fp.write(k + '\n')
 
         from transformers import GPT2LMHeadModel
-        model_pretrained = GPT2LMHeadModel.from_pretrained(name.split('/')[0])
+        model_pretrained = GPT2LMHeadModel.from_pretrained(cfg.hf_model)
         pretrained_states = model_pretrained.state_dict()
 
         pretrained_states_keys = [
@@ -452,10 +485,10 @@ class GPTRewardModel(nn.Module):
         score = self.value_head(hidden).mean(dim=1)
         return score
 
-    def freeze_weights(self):
-        if self.cfg.lora_rank > 0:
+    def freeze_weights(self, finetune_method):
+        if finetune_method == "lora" and self.cfg.lora_rank > 0:
             lora.mark_only_lora_as_trainable(self)
-        else:
+        elif finetune_method == "last_block":
             trainable_params = [
                 "backbone.transformer.decoder_blocks.35.mmsa.mask",
                 "backbone.transformer.decoder_blocks.35.mmsa.qkv_projection.weight",
@@ -476,15 +509,26 @@ class GPTRewardModel(nn.Module):
                     param.requires_grad = False
                 else:
                     print(f"{name} is trainable.")
+        else:
+            print(
+                f"Unsupported method {finetune_method} (lora rank = {self.cfg.lora_rank})"
+            )
 
     @classmethod
-    def from_pretrained(cls, name):
-        cfg = get_configs(name)
+    def from_backbone_checkpoint(cls, cfg: GPTConfig, ckpt_path: str):
+        cfg.pretrain = ckpt_path
         model = GPTRewardModel(cfg)
-        model.backbone = GPT.from_pretrained(name)
+        model.backbone = GPT.from_checkpoint(cfg, ckpt_path)
         model.backbone.lm_head = nn.Identity()
-        model_states_keys = model.state_dict().keys()
-        with open('rm_states_keys.txt', 'w') as fp:
-            for k in model_states_keys:
-                fp.write(k + '\n')
+        return model
+
+    @classmethod
+    def from_pretrained(cls, cfg: GPTConfig):
+        model = GPTRewardModel(cfg)
+        model.backbone = GPT.from_pretrained(cfg)
+        model.backbone.lm_head = nn.Identity()
+        # model_states_keys = model.state_dict().keys()
+        # with open('rm_states_keys.txt', 'w') as fp:
+        #     for k in model_states_keys:
+        #         fp.write(k + '\n')
         return model

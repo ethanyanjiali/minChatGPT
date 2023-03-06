@@ -22,6 +22,7 @@ huggingface-hub==0.12.1
 idna==3.4
 Jinja2==3.1.2
 lit==15.0.7
+loralib==0.1.1
 lxml==4.9.2
 Markdown==3.4.1
 MarkupSafe==2.1.2
@@ -62,9 +63,11 @@ tensorboard-plugin-wit==1.8.1
 tiktoken==0.2.0
 tokenizers==0.13.2
 torchinfo==1.7.2
-torch==2.0.0.dev20230228+cu117
-torchaudio==2.0.0.dev20230301+cu117
-torchvision==0.15.0.dev20230227+cu117
+# Download your own torch nightly
+# torch==2.0.0.dev20230228+cu117
+# torchaudio==2.0.0.dev20230301+cu117
+# torchvision==0.15.0.dev20230227+cu117
+sentencepiece==0.1.97
 tqdm==4.64.1
 transformers==4.26.1
 typing_extensions==4.4.0

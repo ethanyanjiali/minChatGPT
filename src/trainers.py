@@ -13,7 +13,7 @@ import json
 import random
 # import bitsandbytes as bnb
 
-# torch.set_float32_matmul_precision('high')
+torch.set_float32_matmul_precision('high')
 
 
 class Trainer:
@@ -50,7 +50,7 @@ class SFTTrainer(Trainer):
         assert self.device == 'cuda'
         self.max_steps = max_steps
         self.eval_freq = 1
-        self.save_freq = 50000
+        self.save_freq = 10000
         self.model = model
         self.train_dataloader = iter(
             DataLoader(train_dataset,
@@ -95,6 +95,7 @@ class SFTTrainer(Trainer):
         self.model.train()
         step = 0
 
+        t0 = time.time()
         while step < self.max_steps:
             x, y = next(self.train_dataloader)
             x = x.to(self.device)
@@ -115,7 +116,11 @@ class SFTTrainer(Trainer):
             self.optimizer.zero_grad(set_to_none=True)
             lossf = loss.item()
 
-            print(f"step {step}, batch loss {round(lossf,3)}")
+            iter_time = time.time() - t0
+            t0 = time.time()
+            print(
+                f"step {step}, batch loss {round(lossf,3)}, {round(1.0/iter_time, 2)} iters/s"
+            )
             writer.add_scalar('Loss/train/step', lossf, step)
 
             if step % self.save_freq == 0:

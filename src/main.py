@@ -1,29 +1,32 @@
-from models import GPT, GPTRewardModel, HFGPTRewardModel
+from gpt import GPT, GPTRewardModel, HFGPTRewardModel
+from llama import LLaMA, ModelArgs
 from dataset import AnthropicHHRLHFDataset, DahoasRMStaticDataset, DahoasSFTStaticDataset, EYLSFTStaticDataset
 import torch
 import tiktoken
 import click
+from tokenizer import LLaMATokenizer
 from torch.utils.data import DataLoader
 from trainers import RewardModelTrainer, SFTTrainer
 from torchinfo import summary
+import json
 
 
 @click.command()
 @click.option('--task', '-t')
 def main(task):
     device = 'cuda'
-    max_new_tokens = 20
-    num_samples = 8
-    temperature = 0.9
-    top_k = 200
-    prompt = "Hello, my name is"
-    enc = tiktoken.get_encoding("gpt2")
-    encode = lambda s: enc.encode(s, allowed_special={"<|endoftext|>"})
-    decode = lambda l: enc.decode(l)
-    indices = encode(prompt)
-    x = (torch.tensor(indices, dtype=torch.long, device=device)[None, ...])
 
     if task == 'gpt':
+        max_new_tokens = 20
+        num_samples = 8
+        temperature = 0.9
+        top_k = 200
+        prompt = "Hello, my name is"
+        enc = tiktoken.get_encoding("gpt2")
+        encode = lambda s: enc.encode(s, allowed_special={"<|endoftext|>"})
+        decode = lambda l: enc.decode(l)
+        indices = encode(prompt)
+        x = (torch.tensor(indices, dtype=torch.long, device=device)[None, ...])
         model = GPT.from_pretrained()
         model.eval()
         model.to(device)
@@ -34,6 +37,38 @@ def main(task):
                                top_k=top_k)
             print(decode(y[0].tolist()))
             print('---------------')
+    elif task == 'llama':
+        num_samples = 3
+        max_new_tokens = 20
+        ckpt_path = '../models/7B/consolidated.00.pth'
+        params_path = '../models/7B/params.json'
+        tokenizer_path = '../models/tokenizer.model'
+        checkpoint = torch.load(ckpt_path, map_location="cpu")
+        tokenizer = LLaMATokenizer(model_path=tokenizer_path)
+        with open(params_path) as fp:
+            params = json.loads(fp.read())
+        model_args: ModelArgs = ModelArgs(max_seq_len=1024,
+                                          max_batch_size=32,
+                                          **params)
+        model_args.vocab_size = tokenizer.n_words
+
+        with torch.autocast(device_type='cuda', dtype=torch.float16):
+            model = LLaMA(model_args)
+            model.eval()
+            model.to(device)
+            model.load_state_dict(checkpoint, strict=False)
+
+        with torch.no_grad():
+            for k in range(num_samples):
+                x = torch.tensor(tokenizer.encode(prompt, bos=True, eos=False),
+                                 dtype=torch.long,
+                                 device=device)[None, ...]
+                y = model.generate(x,
+                                   max_new_tokens,
+                                   temperature=temperature,
+                                   top_k=top_k)
+                print(tokenizer.decode(y[0].tolist()))
+                print('---------------')
     elif task == "reward":
         rm = GPTRewardModel.from_pretrained('gpt2-xl')
         rm.eval()

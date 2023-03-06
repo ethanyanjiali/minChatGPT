@@ -40,6 +40,17 @@ def main(task):
     elif task == 'llama':
         num_samples = 3
         max_new_tokens = 20
+        prompt = """Tweet: "I hate it when my phone battery dies."
+Sentiment: Negative
+###
+Tweet: "My day has been 👍"
+Sentiment: Positive
+###
+Tweet: "This is the link to the article"
+Sentiment: Neutral
+###
+Tweet: "This new music video was incredibile"
+Sentiment:"""
         ckpt_path = '../models/7B/consolidated.00.pth'
         params_path = '../models/7B/params.json'
         tokenizer_path = '../models/tokenizer.model'
@@ -52,21 +63,20 @@ def main(task):
                                           **params)
         model_args.vocab_size = tokenizer.n_words
 
-        with torch.autocast(device_type='cuda', dtype=torch.float16):
-            model = LLaMA(model_args)
-            model.eval()
-            model.to(device)
-            model.load_state_dict(checkpoint, strict=False)
+        torch.set_default_tensor_type(torch.cuda.HalfTensor)
+        model = LLaMA(model_args)
+        # model.to(device)
+        # model.eval()
+        torch.set_default_tensor_type(torch.FloatTensor)
+        model.load_state_dict(checkpoint, strict=False)
 
-        with torch.no_grad():
+        with torch.inference_mode():
             for k in range(num_samples):
                 x = torch.tensor(tokenizer.encode(prompt, bos=True, eos=False),
                                  dtype=torch.long,
                                  device=device)[None, ...]
                 y = model.generate(x,
-                                   max_new_tokens,
-                                   temperature=temperature,
-                                   top_k=top_k)
+                                   max_new_tokens)
                 print(tokenizer.decode(y[0].tolist()))
                 print('---------------')
     elif task == "reward":

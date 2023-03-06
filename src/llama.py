@@ -146,6 +146,7 @@ class Attention(nn.Module):
         values = values.transpose(1, 2)
         scores = torch.matmul(xq, keys.transpose(2, 3)) / math.sqrt(
             self.head_dim)
+        
         if mask is not None:
             scores = scores + mask    # (bs, n_heads, slen, cache_len + slen)
         scores = F.softmax(scores.float(), dim=-1).type_as(xq)
@@ -248,7 +249,7 @@ class LLaMA(nn.Module):
                  max_new_tokens: int,
                  temperature: float = 0.8,
                  top_p: float = 0.95) -> List[str]:
-        start_pos = len(idx)
+        start_pos = 0
         for _ in range(max_new_tokens):
             logits = self(idx, start_pos)
             if temperature > 0:
@@ -256,7 +257,6 @@ class LLaMA(nn.Module):
                 next_token = self.sample_top_p(probs, top_p)
             else:
                 next_token = torch.argmax(logits, dim=-1)
-            next_token = next_token.reshape(-1)
             idx = torch.cat((idx, next_token), dim=1)
 
         return idx

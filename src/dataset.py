@@ -33,7 +33,8 @@ class EYLSFTStaticDataset(Dataset):
             tokenizer = TiktokenTokenizer('gpt2')
 
         cnt = 0
-        for chosen in tqdm(dataset):
+        print(f"Loading EYLSFTStaticDataset {split} split")
+        for chosen in dataset:
             cnt += 1
             response_text = chosen + "<|endoftext|>"
             response = tokenizer(response_text)
@@ -83,7 +84,8 @@ class DahoasSFTStaticDataset(IterableDataset):
             tokenizer = TiktokenTokenizer('gpt2')
 
         cnt = 0
-        for data in tqdm(dataset):
+        print(f"Loading DahoasSFTStaticDataset {split} split")
+        for data in dataset:
             cnt += 1
             prompt = data['prompt']
 
@@ -127,7 +129,8 @@ class DahoasRMStaticDataset(Dataset):
             tokenizer = TiktokenTokenizer('gpt2')
 
         cnt = 0
-        for data in tqdm(dataset):
+        print(f"Loading DahoasRMStaticDataset {split} split")
+        for data in dataset:
             cnt += 1
             prompt = data['prompt']
 

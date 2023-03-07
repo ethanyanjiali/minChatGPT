@@ -6,138 +6,19 @@ from torch.nn import functional as F
 from transformers import GPT2Model
 from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
 import loralib as lora
+from configs import TrainingConfig
 
 # [1] Attention is all you need
 # [2] Improving Language Understanding by Generated Pre-Training
 # [3] Note 10: Self-Attention & Transformers
 
-from dataclasses import dataclass
-
-
-@dataclass
-class GPTConfig:
-    n_layers: int
-    n_heads: int
-    embedding_dim: int
-    dropout_rate: float
-    use_bias: bool
-    block_size: int
-    vocab_size: int
-    model_name: str
-    hf_model: str
-    lr: float = 0.0001
-    lora_rank: int = 0
-    pretrain: str = "huggingface"
-
-
-def get_configs(name):
-    if name == "gpt2-medium":
-        return GPTConfig(
-            n_layers=24,
-            n_heads=16,
-            embedding_dim=1024,
-            dropout_rate=0,
-            use_bias=True,
-            block_size=1024,
-            vocab_size=50257,
-            model_name="gpt2-medium",
-            hf_model="gpt2-medium",
-        )
-    elif name == "gpt2-medium/dropout":
-        return GPTConfig(
-            n_layers=24,
-            n_heads=16,
-            embedding_dim=1024,
-            dropout_rate=0.2,
-            use_bias=True,
-            block_size=1024,
-            vocab_size=50257,
-            model_name="gpt2-medium/dropout",
-            hf_model="gpt2-medium",
-        )
-    elif name == "gpt2-medium/lora":
-        return GPTConfig(
-            n_layers=24,
-            n_heads=16,
-            embedding_dim=1024,
-            dropout_rate=0,
-            use_bias=True,
-            block_size=1024,
-            vocab_size=50257,
-            lora_rank=1,
-            model_name="gpt2-medium/lora",
-            hf_model="gpt2-medium",
-        )
-    elif name == 'gpt2-large':
-        return GPTConfig(
-            n_layers=36,
-            n_heads=20,
-            embedding_dim=1280,
-            dropout_rate=0,
-            use_bias=True,
-            block_size=1024,
-            vocab_size=50257,
-            model_name="gpt2-large",
-            hf_model="gpt2-large",
-        )
-    elif name == 'gpt2-large/lora':
-        return GPTConfig(
-            n_layers=36,
-            n_heads=20,
-            embedding_dim=1280,
-            dropout_rate=0,
-            use_bias=True,
-            block_size=1024,
-            vocab_size=50257,
-            lora_rank=1,
-            model_name="gpt2-large/lora",
-            hf_model="gpt2-large",
-        )
-    elif name == "gpt2-xl":
-        return GPTConfig(
-            n_layers=48,
-            n_heads=25,
-            embedding_dim=1600,
-            dropout_rate=0,
-            use_bias=True,
-            block_size=1024,
-            vocab_size=50257,
-            model_name="gpt2-xl",
-            hf_model="gpt2-xl",
-        )
-    elif name == "gpt2-xl/dropout":
-        return GPTConfig(
-            n_layers=48,
-            n_heads=25,
-            embedding_dim=1600,
-            dropout_rate=0.2,
-            use_bias=True,
-            block_size=1024,
-            vocab_size=50257,
-            model_name="gpt2-xl/dropout",
-            hf_model="gpt2-xl"
-        )
-    elif name == "gpt2-xl/lora":
-        return GPTConfig(
-            n_layers=48,
-            n_heads=25,
-            embedding_dim=1600,
-            dropout_rate=0,
-            use_bias=True,
-            block_size=1024,
-            vocab_size=50257,
-            lora_rank=1,
-            model_name="gpt2-xl/lora",
-            hf_model="gpt2-xl",
-        )
-
 
 class MaskedMultiheadSelfAttention(nn.Module):
 
-    def __init__(self, cfg: GPTConfig) -> None:
+    def __init__(self, cfg: TrainingConfig) -> None:
         super().__init__()
         # Figure 2 in [1]
-        self.cfg: GPTConfig = cfg
+        self.cfg: TrainingConfig = cfg
         if self.cfg.lora_rank > 0:
             self.qkv_projection = lora.Linear(cfg.embedding_dim,
                                               3 * cfg.embedding_dim,
@@ -231,7 +112,7 @@ class MaskedMultiheadSelfAttention(nn.Module):
 
 class FeedForwardNetworks(nn.Module):
 
-    def __init__(self, cfg: GPTConfig) -> None:
+    def __init__(self, cfg: TrainingConfig) -> None:
         super().__init__()
         if cfg.lora_rank > 0:
             self.fc1 = lora.Linear(cfg.embedding_dim,
@@ -265,9 +146,9 @@ class FeedForwardNetworks(nn.Module):
 
 class TransformerDecoderBlock(nn.Module):
 
-    def __init__(self, cfg: GPTConfig) -> None:
+    def __init__(self, cfg: TrainingConfig) -> None:
         super().__init__()
-        self.cfg: GPTConfig = cfg
+        self.cfg: TrainingConfig = cfg
         self.ln1 = nn.LayerNorm(cfg.embedding_dim,
                                 elementwise_affine=cfg.use_bias)
         self.mmsa = MaskedMultiheadSelfAttention(cfg)
@@ -290,7 +171,7 @@ class TransformerDecoderBlock(nn.Module):
 
 class TransformerDecoder(nn.Module):
 
-    def __init__(self, cfg: GPTConfig) -> None:
+    def __init__(self, cfg: TrainingConfig) -> None:
         super().__init__()
         self.token_embedding_layer = nn.Embedding(
             cfg.vocab_size, cfg.embedding_dim)    # (Vocab, d)
@@ -320,9 +201,9 @@ class TransformerDecoder(nn.Module):
 
 class GPT(nn.Module):
 
-    def __init__(self, cfg: GPTConfig) -> None:
+    def __init__(self, cfg: TrainingConfig) -> None:
         super().__init__()
-        self.cfg: GPTConfig = cfg
+        self.cfg: TrainingConfig = cfg
 
         self.transformer = TransformerDecoder(cfg)
         # Final linear layer as language model head w/o softmax
@@ -345,7 +226,10 @@ class GPT(nn.Module):
         return logits
 
     @classmethod
-    def from_checkpoint(cls, cfg: GPTConfig, ckpt_path: str, compile=False):
+    def from_checkpoint(cls,
+                        cfg: TrainingConfig,
+                        ckpt_path: str,
+                        compile=False):
         model = GPT(cfg)
         if compile:
             model = torch.compile(model)
@@ -354,7 +238,7 @@ class GPT(nn.Module):
         return model
 
     @classmethod
-    def from_pretrained(cls, cfg: GPTConfig):
+    def from_pretrained(cls, cfg: TrainingConfig):
         """
         https://github.com/karpathy/nanoGPT/blob/master/model.py#L213
         """
@@ -466,7 +350,7 @@ class GPT(nn.Module):
 
 class HFGPTRewardModel(nn.Module):
 
-    def __init__(self, cfg: GPTConfig) -> None:
+    def __init__(self, cfg: TrainingConfig) -> None:
         super().__init__()
         self.backbone = None
         self.value_head = nn.Linear(cfg.embedding_dim, 1, bias=False)
@@ -487,7 +371,7 @@ class HFGPTRewardModel(nn.Module):
 
 class GPTRewardModel(nn.Module):
 
-    def __init__(self, cfg: GPTConfig) -> None:
+    def __init__(self, cfg: TrainingConfig) -> None:
         super().__init__()
         self.cfg = cfg
         self.backbone = GPT(cfg)
@@ -530,7 +414,7 @@ class GPTRewardModel(nn.Module):
             )
 
     @classmethod
-    def from_backbone_checkpoint(cls, cfg: GPTConfig, ckpt_path: str):
+    def from_backbone_checkpoint(cls, cfg: TrainingConfig, ckpt_path: str):
         cfg.pretrain = ckpt_path
         model = GPTRewardModel(cfg)
         model.backbone = GPT.from_checkpoint(cfg, ckpt_path)
@@ -538,7 +422,7 @@ class GPTRewardModel(nn.Module):
         return model
 
     @classmethod
-    def from_pretrained(cls, cfg: GPTConfig):
+    def from_pretrained(cls, cfg: TrainingConfig):
         model = GPTRewardModel(cfg)
         model.backbone = GPT.from_pretrained(cfg)
         model.backbone.lm_head = nn.Identity()

@@ -1,6 +1,6 @@
 import json
 import datasets as hfds
-from dataset import AnthropicHHRLHFDataset, DahoasRMStaticDataset, DahoasSFTStaticDataset
+from ..dataset import AnthropicHHRLHFDataset, DahoasRMStaticDataset
 
 
 def sft_set():

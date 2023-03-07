@@ -18,16 +18,15 @@ def prepare_gpt2_input(prompt, device):
     return x, decode
 
 
-def generate_gpt2(model, prompt, device):
+def generate_gpt2(model, prompt, device, samples=2):
     model.eval()
     model.to(device)
-    max_new_tokens = 30
-    num_samples = 2
+    max_new_tokens = 50
     temperature = 0.9
     top_k = 200
     x, decode = prepare_gpt2_input(prompt, device)
 
-    for k in range(num_samples):
+    for k in range(samples):
         y = model.generate(x,
                            max_new_tokens,
                            temperature=temperature,
@@ -44,21 +43,24 @@ def main(task):
     if task == 'gpt':
         prompt = """Human: Hello, my name is Kate. What is your name?
 Assitant:"""
-        model = GPT.from_pretrained("gpt2-medium")
-        generate_gpt2(model, prompt, device)
+        cfg = get_configs("gpt2-xl")
+        model = GPT.from_pretrained(cfg)
+        generate_gpt2(model, prompt, device, samples=10)
     elif task == "unwrap_gpt":
         prompt = """Human: Hello, my name is Kate. What is your name?
 Assitant:"""
-        ckpt_file = "sft_1678085469_step60000.pt"
-        new_file = "original_" + ckpt_file
-        ckpt_path = "./runs/sft_1678085469/"
-        model = GPT.from_checkpoint("gpt2-medium",
-                                    ckpt_path + ckpt_file,
-                                    compile=True)
-        generate_gpt2(model, prompt, device)
+        ckpt_file = "1678083261_step40000.pt"
+        new_file = "original_sft_" + ckpt_file
+        ckpt_path = "./runs/sft_1678083261/"
+        cfg = get_configs("gpt2-xl")
+
+        model = GPT.from_checkpoint(cfg,
+                                    ckpt_path + ckpt_file, compile=True)
         mods = model.modules()
         next(mods)
         inner_model = next(mods)
+        
+        generate_gpt2(inner_model, prompt, device)
         checkpoint = torch.load(ckpt_path + ckpt_file, map_location="cpu")
         torch.save(
             {
@@ -69,11 +71,12 @@ Assitant:"""
     elif task == "gpt_sft":
         prompt = """Human: Hello, my name is Kate. What is your name?
 Assitant:"""
+        cfg = get_configs("gpt2-xl")
 
         model = GPT.from_checkpoint(
-            "gpt2-medium",
-            "./runs/sft_1678085469/original_sft_1678085469_step100000.pt")
-        generate_gpt2(model, prompt, device)
+            cfg,
+            "./runs/sft_1678083261/original_sft_1678083261_step40000.pt")
+        generate_gpt2(model, prompt, device, samples=10)
     elif task == 'llama':
         num_samples = 3
         max_new_tokens = 300
@@ -141,7 +144,7 @@ Assitant:"""
         dataset = load_dataset("Anthropic/hh-rlhf", split='train')
         print(dataset[0])
     elif task == "sft":
-        cfg = get_configs("gpt2-medium/dropout")
+        cfg = get_configs("gpt2-xl/dropout")
         model = GPT.from_pretrained(cfg)
         train_ds = EYLSFTStaticDataset(block_size=1024,
                                        split='train',
@@ -156,7 +159,7 @@ Assitant:"""
                              train_ds,
                              test_ds,
                              batch_size=2,
-                             max_steps=120000,
+                             max_steps=100001,
                              cfg=cfg,
                              finetune_method=False)
         trainer.fit()

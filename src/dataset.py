@@ -17,10 +17,10 @@ class EYLSFTStaticDataset(Dataset):
                  tokenizer_name='tiktoken/gpt2') -> None:
         super().__init__()
         if split == "train":
-            with open("/home/yanjia/Code/minChatGPT/src/sft_train.json") as fp:
+            with open("./sft_train.json") as fp:
                 dataset = json.load(fp)
         else:
-            with open("/home/yanjia/Code/minChatGPT/src/sft_test.json") as fp:
+            with open("./sft_test.json") as fp:
                 dataset = json.load(fp)
         self.tokens = []
         self.block_size = block_size

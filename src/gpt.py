@@ -25,6 +25,7 @@ class GPTConfig:
     vocab_size: int
     model_name: str
     hf_model: str
+    lr: float = 0.0001
     lora_rank: int = 0
     pretrain: str = "huggingface"
 
@@ -103,6 +104,18 @@ def get_configs(name):
             vocab_size=50257,
             model_name="gpt2-xl",
             hf_model="gpt2-xl",
+        )
+    elif name == "gpt2-xl/dropout":
+        return GPTConfig(
+            n_layers=48,
+            n_heads=25,
+            embedding_dim=1600,
+            dropout_rate=0.2,
+            use_bias=True,
+            block_size=1024,
+            vocab_size=50257,
+            model_name="gpt2-xl/dropout",
+            hf_model="gpt2-xl"
         )
     elif name == "gpt2-xl/lora":
         return GPTConfig(
@@ -332,8 +345,10 @@ class GPT(nn.Module):
         return logits
 
     @classmethod
-    def from_checkpoint(cls, cfg: GPTConfig, ckpt_path: str):
+    def from_checkpoint(cls, cfg: GPTConfig, ckpt_path: str, compile=False):
         model = GPT(cfg)
+        if compile:
+            model = torch.compile(model)
         checkpoint = torch.load(ckpt_path, map_location="cpu")
         model.load_state_dict(checkpoint["model_state_dict"], strict=False)
         return model

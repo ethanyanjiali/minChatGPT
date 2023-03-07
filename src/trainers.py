@@ -14,8 +14,6 @@ import random
 from torchinfo import summary
 # import bitsandbytes as bnb
 
-torch.set_float32_matmul_precision('high')
-
 
 class Trainer:
 
@@ -67,7 +65,7 @@ class SFTTrainer(Trainer):
         self.model = model
         self.criterion = CrossEntropyLoss()
 
-        lr = 0.0001
+        lr = cfg.lr
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
         self.grad_clip = 1.0
         self.dtype = torch.float16

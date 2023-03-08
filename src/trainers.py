@@ -1,3 +1,4 @@
+import functools
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
@@ -5,6 +6,7 @@ from loss import KPairwiseLoss, CrossEntropyLoss
 import torch.optim as optim
 from torch.cuda.amp.grad_scaler import GradScaler
 import statistics
+from gpt import GPTRewardModel, TransformerDecoderBlock
 from tqdm import tqdm, trange
 import time
 from torch.utils.tensorboard import SummaryWriter
@@ -30,6 +32,7 @@ from torch.distributed.fsdp.fully_sharded_data_parallel import (
 )
 from torch.distributed.fsdp.wrap import (
     size_based_auto_wrap_policy,
+    transformer_auto_wrap_policy,
     enable_wrap,
     wrap,
 )
@@ -367,29 +370,62 @@ class FSDPRewardModelTrainer(Trainer):
                             reduce_dtype=self.dtype,
                             buffer_dtype=self.dtype)
 
-        opt_model = torch.compile(self.model)
-        opt_model.to(self.rank)
-        dist_model = FSDP(opt_model, mixed_precision=mp, use_orig_params=True)
+        model = self.model
+        # model = torch.compile(self.model)
+        summary(model, input_data=torch.ones(1, 1024).long())
+        # model.to(self.rank)
+
+        torch.cuda.set_device(self.rank)
+        gpt_auto_wrap_policy = functools.partial(
+            transformer_auto_wrap_policy,
+            transformer_layer_cls={
+                TransformerDecoderBlock,
+            },
+        )
+        dist_model = FSDP(
+            model,
+            mixed_precision=mp,
+            use_orig_params=True,
+            limit_all_gathers=True,
+            auto_wrap_policy=gpt_auto_wrap_policy,
+            cpu_offload=CPUOffload(offload_params=True),
+            device_id=torch.cuda.current_device(),
+            sharding_strategy=ShardingStrategy.FULL_SHARD
+            if self.world_size > 1 else ShardingStrategy.NO_SHARD,
+        )
+        print(dist_model)
         self.optimizer = optim.Adam(dist_model.parameters(), lr=self.cfg.lr)
 
         for epoch in range(self.total_epochs):
             self.train_epoch(dist_model, epoch)
             if epoch % self.eval_freq == 0:
                 self.test_epoch(dist_model, epoch)
+            self.save_states(dist_model, epoch)
 
-            if self.rank == 0:
-                save_policy = FullStateDictConfig(offload_to_cpu=True,
-                                                  rank0_only=True)
-                with FSDP.state_dict_type(dist_model,
-                                          StateDictType.FULL_STATE_DICT,
-                                          save_policy):
-                    cpu_state = dist_model.state_dict()
-                    file_name = f'{self.run_name}_final.pt'
-                    torch.save(cpu_state, file_name)
-
-        self.save_states(None, True)
-        test_loss, test_acc = self.test_epoch(opt_model, epoch, False)
+        test_loss, test_acc = self.test_epoch(dist_model, epoch, False)
         self.save_metrics({"test_loss": test_loss, "test_acc": test_acc})
+
+    def save_states(self, model, epoch=None):
+        if self.rank == 0:
+            save_policy = FullStateDictConfig(
+            # offload_to_cpu=True and NO_SHARD is not supported yet
+                offload_to_cpu=self.world_size > 1,
+                rank0_only=True)
+            with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT,
+                                      save_policy):
+                cpu_state = model.state_dict()
+                # remove the _orig_mod prefix from torch.compile
+                cpu_state = {
+                    k.partition("_orig_mod.")[2]: cpu_state[k]
+                    for k in cpu_state.keys()
+                }
+                file_name = f'./runs/{self.run_name}/{self.run_name}_{epoch if epoch else "final"}.pt'
+                torch.save(
+                    {
+                        'epoch': epoch,
+                        'model_state_dict': cpu_state,
+                        'optimizer_state_dict': self.optimizer.state_dict(),
+                    }, file_name)
 
     def train_epoch(self, model, epoch, logging=True):
         self.train_sampler.set_epoch(epoch)
@@ -441,8 +477,8 @@ class FSDPRewardModelTrainer(Trainer):
                     f"Epoch {epoch}, train loss {round(lossf,3)}")
 
         dist.all_reduce(epoch_data, op=dist.ReduceOp.SUM)
-        train_acc = epoch_data[1] / epoch_data[2]
-        train_loss = epoch_data[0] / len(self.train_dataloader)
+        train_acc = epoch_data[1].item() / epoch_data[2].item()
+        train_loss = epoch_data[0].item() / len(self.train_dataloader)
 
         if self.rank == 0:
             pbar.close()
@@ -492,8 +528,8 @@ class FSDPRewardModelTrainer(Trainer):
                     f"Epoch {epoch}, test loss {round(lossf,3)}")
 
         dist.all_reduce(epoch_data, op=dist.ReduceOp.SUM)
-        test_acc = epoch_data[1] / epoch_data[2]
-        test_loss = epoch_data[0] / len(self.train_dataloader)
+        test_acc = epoch_data[1].item() / epoch_data[2].item()
+        test_loss = epoch_data[0].item() / len(self.test_dataloader)
 
         if self.rank == 0:
             pbar.close()

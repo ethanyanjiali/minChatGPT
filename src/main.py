@@ -168,6 +168,10 @@ Assitant:"""
         scores = torch.tensor([[0.8, 0.4], [0.5, 0.6]])
         loss = loss_func(scores)
         print(loss)
+    elif task == "load_fsdp":
+        cfg = get_configs("gpt2-medium")
+        model = GPT.from_checkpoint(
+            cfg, "/home/yanjia/Code/minChatGPT/src/rm_1678263092_final.pt")
     elif task == "test_tokenizer":
         from dataset import TiktokenTokenizer
         from transformers import GPT2Tokenizer, GPT2TokenizerFast

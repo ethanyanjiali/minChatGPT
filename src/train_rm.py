@@ -24,7 +24,7 @@ def train_fsdp(rank, world_size, pretrain):
     print(f"Start rank {rank} with world size {world_size}")
     setup(rank, world_size)
     device = "cuda"
-    cfg = get_configs("gpt2-medium")
+    cfg = get_configs("gpt2-xl")
     rm = GPTRewardModel.from_pretrained(cfg)
     train_ds = DahoasRMStaticDataset(block_size=1024,
                                      split='train',

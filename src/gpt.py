@@ -422,6 +422,19 @@ class GPTRewardModel(nn.Module):
         return model
 
     @classmethod
+    def from_checkpoint(cls,
+                        cfg: TrainingConfig,
+                        ckpt_path: str,
+                        strict=False,
+                        compile=False):
+        model = GPTRewardModel(cfg)
+        if compile:
+            model = torch.compile(model)
+        checkpoint = torch.load(ckpt_path, map_location="cpu")
+        model.load_state_dict(checkpoint["model_state_dict"], strict=strict)
+        return model
+
+    @classmethod
     def from_pretrained(cls, cfg: TrainingConfig):
         model = GPTRewardModel(cfg)
         model.backbone = GPT.from_pretrained(cfg)

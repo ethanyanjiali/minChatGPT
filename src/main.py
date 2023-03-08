@@ -1,4 +1,5 @@
-from gpt import GPT, GPTRewardModel, HFGPTRewardModel, get_configs
+from gpt import GPT, GPTRewardModel, HFGPTRewardModel
+from configs import get_configs
 from llama import LLaMA, ModelArgs
 from dataset import AnthropicHHRLHFDataset, DahoasRMStaticDataset, DahoasSFTStaticDataset, EYLSFTStaticDataset
 import torch
@@ -54,12 +55,11 @@ Assitant:"""
         ckpt_path = "./runs/sft_1678083261/"
         cfg = get_configs("gpt2-xl")
 
-        model = GPT.from_checkpoint(cfg,
-                                    ckpt_path + ckpt_file, compile=True)
+        model = GPT.from_checkpoint(cfg, ckpt_path + ckpt_file, compile=True)
         mods = model.modules()
         next(mods)
         inner_model = next(mods)
-        
+
         generate_gpt2(inner_model, prompt, device)
         checkpoint = torch.load(ckpt_path + ckpt_file, map_location="cpu")
         torch.save(
@@ -74,8 +74,7 @@ Assitant:"""
         cfg = get_configs("gpt2-xl")
 
         model = GPT.from_checkpoint(
-            cfg,
-            "./runs/sft_1678083261/original_sft_1678083261_step40000.pt")
+            cfg, "./runs/sft_1678083261/original_sft_1678083261_step40000.pt")
         generate_gpt2(model, prompt, device, samples=10)
     elif task == 'llama':
         num_samples = 3
@@ -163,53 +162,16 @@ Assitant:"""
                              cfg=cfg,
                              finetune_method=False)
         trainer.fit()
-    elif task == "train_rm_sft":
-        cfg = get_configs("gpt2-medium/lora")
-        rm = GPTRewardModel.from_backbone_checkpoint(
-            cfg, "./runs/sft_1678085469/original_sft_1678085469_step100000.pt")
-        train_ds = DahoasRMStaticDataset(block_size=1024,
-                                         split='train',
-                                         max_examples=None,
-                                         tokenizer_name="tiktoken/gpt2")
-        test_ds = DahoasRMStaticDataset(block_size=1024,
-                                        split='test',
-                                        max_examples=None,
-                                        tokenizer_name="tiktoken/gpt2")
-        trainer = RewardModelTrainer(device,
-                                     rm,
-                                     train_ds,
-                                     test_ds,
-                                     batch_size=2,
-                                     total_epochs=1,
-                                     cfg=cfg,
-                                     finetune_method="lora")
-        trainer.fit()
-    elif task == "train_rm":
-        cfg = get_configs("gpt2-medium/lora")
-        rm = GPTRewardModel.from_pretrained(cfg)
-        train_ds = DahoasRMStaticDataset(block_size=1024,
-                                         split='train',
-                                         max_examples=None,
-                                         tokenizer_name="tiktoken/gpt2")
-        test_ds = DahoasRMStaticDataset(block_size=1024,
-                                        split='test',
-                                        max_examples=None,
-                                        tokenizer_name="tiktoken/gpt2")
-        trainer = RewardModelTrainer(device,
-                                     rm,
-                                     train_ds,
-                                     test_ds,
-                                     batch_size=1,
-                                     total_epochs=1,
-                                     cfg=cfg,
-                                     finetune_method="lora")
-        trainer.fit()
     elif task == "test_loss":
         from loss import KPairwiseLoss
         loss_func = KPairwiseLoss()
         scores = torch.tensor([[0.8, 0.4], [0.5, 0.6]])
         loss = loss_func(scores)
         print(loss)
+    elif task == "load_fsdp":
+        cfg = get_configs("gpt2-medium")
+        model = GPT.from_checkpoint(
+            cfg, "/home/yanjia/Code/minChatGPT/src/rm_1678263092_final.pt")
     elif task == "test_tokenizer":
         from dataset import TiktokenTokenizer
         from transformers import GPT2Tokenizer, GPT2TokenizerFast

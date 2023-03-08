@@ -24,6 +24,7 @@ class KPairwiseLoss(nn.Module):
         scores: shape of (B, C) where C is number of completions ranked in order
         """
         # Consider scores as [[0.8, 0.7, 0.6]]
+        # print(scores.shape)
         B, C = scores.size()
         # scores = [[[0.8], [0.7], [0.6]]]
         scores = scores[:, :, None]    # (B, C, 1)

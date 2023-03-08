@@ -17,18 +17,6 @@ from tokenizer import LLaMATokenizer
 
 
 @dataclass
-class GPTConfig:
-    n_layers: int
-    n_heads: int
-    embedding_dim: int
-    dropout_rate: float
-    use_bias: bool
-    block_size: int
-    vocab_size: int
-    lora_rank: int = 0
-
-
-@dataclass
 class ModelArgs:
     dim: int = 512
     n_layers: int = 8
@@ -146,7 +134,7 @@ class Attention(nn.Module):
         values = values.transpose(1, 2)
         scores = torch.matmul(xq, keys.transpose(2, 3)) / math.sqrt(
             self.head_dim)
-        
+
         if mask is not None:
             scores = scores + mask    # (bs, n_heads, slen, cache_len + slen)
         scores = F.softmax(scores.float(), dim=-1).type_as(xq)

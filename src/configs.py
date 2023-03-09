@@ -15,6 +15,7 @@ class TrainingConfig:
     lr: float = 0.0001
     lora_rank: int = 0
     pretrain: str = "huggingface"
+    activation_checkpointing: bool = False
 
 
 def get_configs(name):

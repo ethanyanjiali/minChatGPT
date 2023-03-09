@@ -142,26 +142,6 @@ Assitant:"""
         from datasets import load_dataset
         dataset = load_dataset("Anthropic/hh-rlhf", split='train')
         print(dataset[0])
-    elif task == "sft":
-        cfg = get_configs("gpt2-xl/dropout")
-        model = GPT.from_pretrained(cfg)
-        train_ds = EYLSFTStaticDataset(block_size=1024,
-                                       split='train',
-                                       max_examples=None,
-                                       tokenizer_name="tiktoken/gpt2")
-        test_ds = EYLSFTStaticDataset(block_size=1024,
-                                      split='test',
-                                      max_examples=None,
-                                      tokenizer_name="tiktoken/gpt2")
-        trainer = SFTTrainer(device,
-                             model,
-                             train_ds,
-                             test_ds,
-                             batch_size=2,
-                             max_steps=100001,
-                             cfg=cfg,
-                             finetune_method=False)
-        trainer.fit()
     elif task == "test_loss":
         from loss import KPairwiseLoss
         loss_func = KPairwiseLoss()

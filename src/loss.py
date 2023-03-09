@@ -4,6 +4,18 @@ import torch.nn.functional as F
 import math
 
 
+class PolicyLoss(nn.Module):
+
+    def forward(self):
+        pass
+
+
+class ValueLoss(nn.Module):
+
+    def forward(self):
+        pass
+
+
 class CrossEntropyLoss(nn.Module):
 
     def forward(self, y_hat: torch.Tensor, y: torch.Tensor):

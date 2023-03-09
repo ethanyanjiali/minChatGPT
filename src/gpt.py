@@ -7,6 +7,7 @@ from transformers import GPT2Model
 from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
 import loralib as lora
 from configs import TrainingConfig
+from torch.utils.checkpoint import checkpoint
 
 # [1] Attention is all you need
 # [2] Improving Language Understanding by Generated Pre-Training
@@ -173,6 +174,7 @@ class TransformerDecoder(nn.Module):
 
     def __init__(self, cfg: TrainingConfig) -> None:
         super().__init__()
+        self.cfg = cfg
         self.token_embedding_layer = nn.Embedding(
             cfg.vocab_size, cfg.embedding_dim)    # (Vocab, d)
         self.postion_embedding_layer = nn.Embedding(cfg.block_size,
@@ -193,7 +195,10 @@ class TransformerDecoder(nn.Module):
 
         # N decoder blocks
         for block in self.decoder_blocks:
-            x = block(x, attention_mask)
+            if self.cfg.activation_checkpointing:
+                x = checkpoint(block, x, attention_mask)
+            else:
+                x = block(x, attention_mask)
 
         y = self.ln(x)
         return y

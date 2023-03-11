@@ -11,6 +11,7 @@ from llama import LLaMA
 from gpt import GPTRewardModel, GPT, TransformerDecoderBlock
 from tqdm import tqdm, trange
 import time
+from datetime import datetime
 from torch.utils.tensorboard import SummaryWriter
 import os
 import json
@@ -18,6 +19,7 @@ import random
 from typing import Union
 from accelerate import Accelerator
 from torchinfo import summary
+from objective import KLPenalizedReward
 from configs import TrainingConfig
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -75,27 +77,46 @@ class Trainer:
 
 class PPOTrainer(Trainer):
 
-    def __init__(self, cfg: TrainingConfig, actor: Union[GPT, LLaMA], critic,
-                 reward_model, sft_model, train_dataset, test_dataset,
-                 batch_size) -> None:
+    def __init__(self, cfg: TrainingConfig, actor: Union[GPT, LLaMA],
+                 critic: GPTRewardModel, reward_model, sft_model,
+                 train_dataset, batch_size) -> None:
         super().__init__()
         self.cfg = cfg
+        self.run_name = f"sft_{datetime.now().strftime('%Y%m%d%H%M')}"
+        self.device = "cuda"
         self.max_new_tokens = 128
         self.actor = actor
         self.critic = critic
         self.sft_model = sft_model
         self.reward_model = reward_model
+        self.objective_func = KLPenalizedReward(beta=0.02)
+        self.actor_criterion = PolicyLoss()
+        self.critic_criterion = ValueLoss()
         self.train_dataloader = DataLoader(train_dataset,
                                            batch_size=batch_size,
                                            num_workers=8,
                                            shuffle=True,
                                            pin_memory=True)
-        self.test_dataloader = DataLoader(test_dataset,
-                                          batch_size=batch_size,
-                                          num_workers=8,
-                                          pin_memory=True)
+        self.actor_optimizer = optim.Adam(self.actor.parameters(),
+                                          lr=cfg.actor_lr)
+        self.critic_optimizer = optim.Adam(self.critic.parameters(),
+                                           lr=cfg.critic_lr)
+
         self.tota_epochs = 2
-        self.criterion = None
+
+    def kl_penalized_reward(self,
+                            reward,
+                            log_prob_rl,
+                            log_prob_sft,
+                            action_mask=None):
+        # log(π_RL(y|x) / π_SFL(y|x)) = log(π_RL(y|x)) - log(π_SFL(y|x))
+        ratio = log_prob_rl - log_prob_sft
+        # k3 in http://joschu.net/blog/kl-approx.html
+        estimated_kl = (torch.exp(ratio) - 1) - ratio
+        if action_mask:
+            estimated_kl = estimated_kl * action_mask
+            estimated_kl.sum(dim=1) / action_mask.sum(dim=1)
+        return reward - 0.002 * self.per_token_kl(log_prob_rl, log_prob_sft)
 
     @torch.no_grad()
     def make_experience(self, idx, attention_mask):
@@ -109,16 +130,15 @@ class PPOTrainer(Trainer):
                                          self.max_new_tokens,
                                          temperature=1.0,
                                          top_k=50)
-        actor_logits = self.actor(completion)
-        sft_logits = self.sft_model(completion)
+        actor_logits = self.actor(completion, attention_mask)
+        sft_logits = self.sft_model(completion, attention_mask)
         value = self.critic(completion)
-        raw_reward = self.reward_model(completion)
-        normalized_reward = None
-        advantage = normalized_reward - value
-        self.actor_criterion = PolicyLoss()
-        self.critic_criterion = ValueLoss()
+        reward = self.reward_model(completion, attention_mask)
+        kl_penalized_reward = self.kl_penalized_reward(reward, actor_logits,
+                                                       sft_logits)
+        advantage = kl_penalized_reward - value
 
-        return completion, actor_logits, value, normalized_reward
+        return completion, actor_logits, value, kl_penalized_reward, advantage
 
     def fit(self):
 
@@ -134,10 +154,22 @@ class PPOTrainer(Trainer):
                 curr_action_logits = self.actor(completion)
                 actor_loss = self.actor_criterion(curr_action_logits,
                                                   action_logits)
+                actor_loss.backward()
+                self.actor_optimizer.step()
+                self.actor_optimizer.zero_grad(set_to_none=True)
+                actor_lossf = actor_loss.item()
 
                 self.critic.train()
                 curr_value = self.critic(completion)
                 critic_loss = self.critic_criterion(curr_value, value)
+                critic_loss.backward()
+                self.critic_optimizer.step()
+                self.critic_optimizer.zero_grad(set_to_none=True)
+                critic_lossf = critic_loss.item()
+
+                pbar.set_description(
+                    f"actor loss {round(actor_lossf,3)}, critic loss {round(critic_lossf,3)}"
+                )
 
 
 class SFTTrainer(Trainer):
@@ -146,7 +178,7 @@ class SFTTrainer(Trainer):
                  test_dataset, batch_size, max_steps, finetune_method) -> None:
         super().__init__()
         self.cfg = cfg
-        self.run_name = f"sft_{str(int(time.time()))}"
+        self.run_name = f"sft_{datetime.now().strftime('%Y%m%d%H%M')}"
         self.device = device
         assert self.device == 'cuda'
         self.max_steps = max_steps
@@ -245,7 +277,7 @@ class RewardModelTrainer(Trainer):
                  batch_size,
                  finetune_method=False) -> None:
         super().__init__()
-        self.run_name = f"rm_{str(int(time.time()))}"
+        self.run_name = f"rm_{datetime.now().strftime('%Y%m%d%H%M')}"
         self.device = device
         assert self.device == 'cuda'
         self.total_epochs = total_epochs
@@ -379,7 +411,7 @@ class AcceleratorRewardModelTrainer(Trainer):
                  batch_size,
                  finetune_method=False) -> None:
         super().__init__()
-        self.run_name = f"rm_{str(int(time.time()))}"
+        self.run_name = f"rm_{datetime.now().strftime('%Y%m%d%H%M')}"
         self.device = device
         assert self.device == 'cuda'
         self.total_epochs = total_epochs
@@ -519,7 +551,7 @@ class FSDPRewardModelTrainer(Trainer):
                  finetune_method=False) -> None:
         super().__init__()
         self.cfg = cfg
-        self.run_name = f"rm_{str(int(time.time()))}"
+        self.run_name = f"rm_{datetime.now().strftime('%Y%m%d%H%M')}"
         self.device = device
         self.rank = rank
         self.world_size = world_size

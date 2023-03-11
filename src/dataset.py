@@ -8,6 +8,61 @@ import json
 from tokenizer import TiktokenTokenizer
 
 
+class AwesomeChatGPTPromptsDataset(Dataset):
+    """
+    https://huggingface.co/datasets/fka/awesome-chatgpt-prompts
+
+    Changing it to Human Assitant conversation
+    """
+
+    def __init__(self,
+                 block_size,
+                 max_examples=None,
+                 tokenizer_name='tiktoken/gpt2') -> None:
+        super().__init__()
+        dataset = load_dataset("fka/awesome-chatgpt-prompts")
+        self.prompts = []
+
+        if tokenizer_name == "huggingface/gpt2":
+            tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+            tokenizer.pad_token = tokenizer.eos_token
+        elif tokenizer_name == "huggingface/gpt2fast":
+            tokenizer = GPT2TokenizerFast.from_pretrained('gpt2')
+        elif tokenizer_name == "tiktoken/gpt2":
+            tokenizer = TiktokenTokenizer('gpt2')
+
+        cnt = 0
+        print(f"Loading AwesomeChatGPTPromptsDataset")
+        for data in dataset:
+            cnt += 1
+            prompt = f"Human: {data['prompt']}\nAssistant:"
+            tokens = tokenizer(prompt,
+                               max_length=block_size,
+                               padding="max_length",
+                               truncation=True,
+                               return_tensors="pt")
+
+            self.prompts.append([tokens['input_ids'], tokens['input_ids']])
+
+            if max_examples and cnt >= max_examples:
+                break
+
+    @classmethod
+    def save(cls, split, fp):
+        dataset = load_dataset("fka/awesome-chatgpt-prompts", split=split)
+        examples = []
+        for data in tqdm(dataset):
+            examples.append(data["prompt"])
+        import json
+        json.dump(examples, fp)
+
+    def __len__(self):
+        return len(self.prompts)
+
+    def __getitem__(self, idx):
+        return self.prompts[idx][0], self.prompts[idx][1]    # (1, T), (1, T)
+
+
 class EYLSFTStaticDataset(Dataset):
 
     def __init__(self,

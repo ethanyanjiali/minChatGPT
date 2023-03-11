@@ -8,7 +8,7 @@ from configs import get_configs
 
 def train():
     device = 'cuda'
-    cfg = get_configs("gpt2-xl/dropout")
+    cfg = get_configs("gpt2-large/dropout")
     model = GPT.from_pretrained(cfg)
     train_ds = EYLSFTStaticDataset(block_size=1024,
                                    split='train',
@@ -23,16 +23,17 @@ def train():
                          model,
                          train_ds,
                          test_ds,
-                         batch_size=2,
-                         max_steps=100001,
+                         batch_size=1,
+                         max_steps=200001,
                          finetune_method=False)
+    trainer.fit()
 
 
 @click.command()
 @click.option('--strategy', '-s')
-def main(strategy, pretrain):
+def main(strategy):
     torch.manual_seed(1234)
-    train(pretrain)
+    train()
 
 
 if __name__ == "__main__":

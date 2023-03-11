@@ -12,6 +12,8 @@ class TrainingConfig:
     vocab_size: int
     model_name: str
     hf_model: str
+    actor_lr: float = 0.0001
+    critic_lr: float = 0.0001
     lr: float = 0.0001
     lora_rank: int = 0
     pretrain: str = "huggingface"
@@ -66,6 +68,18 @@ def get_configs(name):
             block_size=1024,
             vocab_size=50257,
             model_name="gpt2-large",
+            hf_model="gpt2-large",
+        )
+    elif name == 'gpt2-large/dropout':
+        return TrainingConfig(
+            n_layers=36,
+            n_heads=20,
+            embedding_dim=1280,
+            dropout_rate=0,
+            use_bias=True,
+            block_size=1024,
+            vocab_size=50257,
+            model_name="gpt2-large/dropout",
             hf_model="gpt2-large",
         )
     elif name == 'gpt2-large/lora':

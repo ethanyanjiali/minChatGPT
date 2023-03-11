@@ -75,7 +75,7 @@ def train_accelerate():
 
 def train(pretrain):
     device = 'cuda'
-    cfg = get_configs("gpt2-xl")
+    cfg = get_configs("gpt2")
 
     if pretrain == "gpt2":
         rm = GPTRewardModel.from_pretrained(cfg)

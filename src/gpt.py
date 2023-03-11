@@ -6,7 +6,7 @@ from torch.nn import functional as F
 from transformers import GPT2Model
 from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
 import loralib as lora
-from configs import TrainingConfig
+from configs import TrainingConfig, get_configs
 from torch.utils.checkpoint import checkpoint
 
 # [1] Attention is all you need

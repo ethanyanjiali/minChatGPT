@@ -8,7 +8,7 @@ import torch.optim as optim
 from torch.cuda.amp.grad_scaler import GradScaler
 import statistics
 from llama import LLaMA
-from gpt import GPTRewardModel, GPT, TransformerDecoderBlock
+from gpt import GPTRewardModel, GPT, GPTCritic, TransformerDecoderBlock, GPTActor
 from tqdm import tqdm, trange
 import time
 from datetime import datetime
@@ -19,7 +19,6 @@ import random
 from typing import Union
 from accelerate import Accelerator
 from torchinfo import summary
-from objective import KLPenalizedReward
 from configs import TrainingConfig
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -77,8 +76,8 @@ class Trainer:
 
 class PPOTrainer(Trainer):
 
-    def __init__(self, cfg: TrainingConfig, actor: Union[GPT, LLaMA],
-                 critic: GPTRewardModel, reward_model, sft_model,
+    def __init__(self, cfg: TrainingConfig, actor: GPTActor, critic: GPTCritic,
+                 reward_model: GPTRewardModel, sft_model: GPTActor,
                  train_dataset, batch_size) -> None:
         super().__init__()
         self.cfg = cfg
@@ -89,7 +88,7 @@ class PPOTrainer(Trainer):
         self.critic = critic
         self.sft_model = sft_model
         self.reward_model = reward_model
-        self.objective_func = KLPenalizedReward(beta=0.02)
+        # Separate actor loss from critic loss to save optimizer memory
         self.actor_criterion = PolicyLoss()
         self.critic_criterion = ValueLoss()
         self.train_dataloader = DataLoader(train_dataset,
@@ -102,7 +101,8 @@ class PPOTrainer(Trainer):
         self.critic_optimizer = optim.Adam(self.critic.parameters(),
                                            lr=cfg.critic_lr)
 
-        self.tota_epochs = 2
+        self.total_epochs = 1
+        print("Initialized PPO Trainer")
 
     def kl_penalized_reward(self,
                             reward,
@@ -116,52 +116,71 @@ class PPOTrainer(Trainer):
         if action_mask:
             estimated_kl = estimated_kl * action_mask
             estimated_kl.sum(dim=1) / action_mask.sum(dim=1)
-        return reward - 0.002 * self.per_token_kl(log_prob_rl, log_prob_sft)
+        return reward - 0.002 * estimated_kl
 
     @torch.no_grad()
-    def make_experience(self, idx, attention_mask):
+    def make_experience(self, idx, input_masks):
         self.reward_model.eval()
         self.sft_model.eval()
         self.actor.eval()
         self.critic.eval()
 
         # TODO: Batch generate
-        completion = self.actor.generate(idx,
-                                         self.max_new_tokens,
-                                         temperature=1.0,
-                                         top_k=50)
-        actor_logits = self.actor(completion, attention_mask)
-        sft_logits = self.sft_model(completion, attention_mask)
-        value = self.critic(completion)
-        reward = self.reward_model(completion, attention_mask)
-        kl_penalized_reward = self.kl_penalized_reward(reward, actor_logits,
-                                                       sft_logits)
+        completion, attention_mask, num_actions = self.actor.batch_generate(
+            idx, input_masks, self.max_new_tokens, temperature=1.0, top_k=50)
+        print("completion", completion.shape)
+        print("input_masks", input_masks.shape)
+        print("torch.count_nonzero(attention_mask, dim=1)",
+              torch.count_nonzero(attention_mask, dim=1))
+        print("num_actions", num_actions)
+        print("idx", idx)
+        print("input_masks", input_masks)
+
+        actor_log_probs = self.actor.forward_actor(completion, attention_mask,
+                                                   num_actions)
+        sft_log_probs = self.sft_model.forward_actor(completion,
+                                                     attention_mask,
+                                                     num_actions)
+        value = self.critic.forward_critic(completion)    #(B)
+        reward = self.reward_model(completion,
+                                   attention_mask).view(-1)    # (B)
+
+        print("actor_log_probs", actor_log_probs.shape)
+        print("sft_log_probs", sft_log_probs.shape)
+        print("value", value.shape)
+        print("reward", reward.shape)
+
+        kl_penalized_reward = self.kl_penalized_reward(reward, actor_log_probs,
+                                                       sft_log_probs)
         advantage = kl_penalized_reward - value
 
-        return completion, actor_logits, value, kl_penalized_reward, advantage
+        return completion, actor_log_probs, attention_mask, kl_penalized_reward, advantage, num_actions
 
     def fit(self):
-
         for epoch in range(self.total_epochs):
-            for step, (prompt, attention_masks) in enumerate(
+            for step, (prompt, input_masks) in enumerate(
                     pbar := tqdm(self.train_dataloader)):
+                prompt, input_masks = prompt.to(self.device), input_masks.to(
+                    self.device)
                 total_steps = step + epoch * len(self.train_dataloader)
 
-                completion, action_logits, value, normalized_reward = self.make_experience(
-                    prompt, attention_masks)
+                completion, actor_log_probs, attention_mask, reward, advantage, num_actions = self.make_experience(
+                    prompt, input_masks)
 
                 self.actor.train()
-                curr_action_logits = self.actor(completion)
-                actor_loss = self.actor_criterion(curr_action_logits,
-                                                  action_logits)
+                curr_actor_log_probs = self.actor.forward_actor(
+                    completion, attention_mask, num_actions)
+                actor_loss = self.actor_criterion(curr_actor_log_probs,
+                                                  actor_log_probs, advantage)
                 actor_loss.backward()
                 self.actor_optimizer.step()
                 self.actor_optimizer.zero_grad(set_to_none=True)
                 actor_lossf = actor_loss.item()
 
                 self.critic.train()
-                curr_value = self.critic(completion)
-                critic_loss = self.critic_criterion(curr_value, value)
+                curr_value = self.critic.forward_critic(
+                    completion, attention_mask, num_actions)
+                critic_loss = self.critic_criterion(curr_value, reward)
                 critic_loss.backward()
                 self.critic_optimizer.step()
                 self.critic_optimizer.zero_grad(set_to_none=True)
@@ -170,6 +189,7 @@ class PPOTrainer(Trainer):
                 pbar.set_description(
                     f"actor loss {round(actor_lossf,3)}, critic loss {round(critic_lossf,3)}"
                 )
+                break
 
 
 class SFTTrainer(Trainer):

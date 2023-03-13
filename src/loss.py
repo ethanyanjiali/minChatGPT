@@ -5,15 +5,30 @@ import math
 
 
 class PolicyLoss(nn.Module):
+    """
+    Proximal Policy Optimization Algorithms
+    https://arxiv.org/pdf/1707.06347.pdf
+    """
 
-    def forward(self):
-        pass
+    def __init__(self, eps=0.2, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.eps = eps
+
+    def forward(self, new_actor_log_probs, old_actor_log_probs, advantage):
+        # reverse the log to get π_new(a_t|s_t) / π_old(a_t|s_t)
+        ratio: torch.Tensor = (new_actor_log_probs - old_actor_log_probs).exp()
+        surrogate_objectives = torch.min(
+            ratio * advantage,
+            ratio.clamp(1 - self.eps, 1 + self.eps) * advantage)
+        # minimize the negative loss -> maximize the objective
+        loss = -surrogate_objectives
+        return loss.mean()
 
 
 class ValueLoss(nn.Module):
 
-    def forward(self):
-        pass
+    def forward(self, value, reward):
+        return F.mse_loss(value, reward)
 
 
 class CrossEntropyLoss(nn.Module):

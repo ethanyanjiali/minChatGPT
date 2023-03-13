@@ -8,6 +8,7 @@ from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttenti
 import loralib as lora
 from configs import TrainingConfig, get_configs
 from torch.utils.checkpoint import checkpoint
+from tokenizer import TiktokenTokenizer
 
 # [1] Attention is all you need
 # [2] Improving Language Understanding by Generated Pre-Training
@@ -209,6 +210,7 @@ class GPT(nn.Module):
     def __init__(self, cfg: TrainingConfig) -> None:
         super().__init__()
         self.cfg: TrainingConfig = cfg
+        self.tokenizer = TiktokenTokenizer("gpt2")
 
         self.transformer = TransformerDecoder(cfg)
         # Final linear layer as language model head w/o softmax
@@ -346,9 +348,59 @@ class GPT(nn.Module):
             # apply softmax to convert logits to (normalized) probabilities
             probs = F.softmax(logits, dim=-1)
             # sample from the distribution
-            next_token = torch.multinomial(probs, num_samples=1)
+            next_id = torch.multinomial(probs, num_samples=1)
             # append sampled index to the running sequence and continue
-            idx = torch.cat((idx, next_token), dim=1)
+            idx = torch.cat((idx, next_id), dim=1)
+
+        return idx
+
+    @torch.no_grad()
+    def batch_generate(self,
+                       idx: torch.Tensor,
+                       input_masks: torch.Tensor,
+                       max_new_tokens: int,
+                       temperature=1.0,
+                       top_k=None):
+        """
+        idx: (B, T)
+        input_masks: (B, T)
+        """
+        B, T = idx.size()
+        input_lengths = torch.count_nonzero(input_masks, dim=1)
+        print("input_masks", input_masks)
+        print("input_lengths", input_lengths)
+        min_input_length = torch.min(input_lengths)
+        max_input_length = torch.max(input_lengths)
+        print("min_input_length", min_input_length)
+        print("max_input_length", max_input_length)
+        total_length = min(self.cfg.block_size,
+                           max_input_length + max_new_tokens)
+        print("idx", idx.shape)
+
+        if T < total_length:
+            idx = F.pad(idx, (0, total_length - T), self.tokenizer.pad_token)
+        input_masks = input_masks.bool()
+        for curr_pos in range(min_input_length, total_length):
+            # forward the model to get the logits for the index in the sequence
+            logits = self(idx[:, :curr_pos])
+            # pluck the logits at the final step and scale by desired temperature
+            logits = logits[:, -1, :] / temperature
+            # optionally crop the logits to only the top k options
+            if top_k is not None:
+                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                logits[logits < v[:, [-1]]] = -float('Inf')
+            # apply softmax to convert logits to (normalized) probabilities
+            probs = F.softmax(logits, dim=-1)
+            # sample from the distribution
+            next_id = torch.multinomial(probs, num_samples=1).view(-1)
+            # print("curr_pos", curr_pos)
+            # print("input_masks[:, curr_pos]", input_masks[:, curr_pos].shape)
+            # print("idx[:, curr_pos]", idx[:, curr_pos].shape)
+            # print("next_id", next_id.shape)
+            next_id = torch.where(input_masks[:, curr_pos], idx[:, curr_pos],
+                                  next_id)
+            # append sampled index to the running sequence and continue
+            idx[:, curr_pos] = next_id
 
         return idx
 
@@ -371,6 +423,68 @@ class HFGPTRewardModel(nn.Module):
         cfg = get_configs(name)
         model = HFGPTRewardModel(cfg)
         model.backbone = GPT2Model.from_pretrained(name.split('/')[0])
+        return model
+
+
+class GPTActor(GPT):
+
+    def __init__(self, cfg: TrainingConfig) -> None:
+        super().__init__(cfg)
+        self.cfg = cfg
+
+    def forward_actor(self,
+                      x: Tensor,
+                      attention_mask: Tensor = None,
+                      num_actions=1):
+        """
+        x (B, T)
+        """
+        logits = super().forward(
+            x, attention_mask)    # logits = (B, T, voca_size)
+        log_prob_all_vocab = F.log_softmax(
+            logits[:, :-1, :], dim=2
+        )    # no need to know the logits of last token because we don't have the index of that token in x
+        index = x[:, 1:].unsqueeze(-1)
+        print("log_prob_all_vocab", log_prob_all_vocab.shape)
+        print("index", index.shape)
+        log_prob_output = log_prob_all_vocab.gather(
+            dim=2,
+            index=index)    # teacher-forcing, get the prob of each gt token
+        return log_prob_output[:, -num_actions:]
+
+    def batch_generate(self,
+                       idx,
+                       input_masks: torch.Tensor,
+                       max_new_tokens,
+                       temperature=1,
+                       top_k=None):
+        """
+        idx: Shape of (B, T)
+        """
+        completions = super().batch_generate(idx, input_masks, max_new_tokens,
+                                             temperature, top_k)
+        print("completions", completions.shape)
+        print("completions != self.tokenizer.pad_token",
+              (completions != self.tokenizer.pad_token).shape)
+        attention_mask = torch.where(completions != self.tokenizer.pad_token,
+                                     torch.ones_like(completions),
+                                     torch.zeros_like(completions))
+        # we can only take the minimum among all instances in this batch as common num_actions
+        num_actions = torch.min(
+            torch.count_nonzero(attention_mask, dim=1) -
+            torch.count_nonzero(input_masks, dim=1))    # num_actions -> scalar
+        return completions, attention_mask, num_actions
+
+    @classmethod
+    def from_checkpoint(cls,
+                        cfg: TrainingConfig,
+                        ckpt_path: str,
+                        compile=False):
+        model = GPTActor(cfg)
+        if compile:
+            model = torch.compile(model)
+        checkpoint = torch.load(ckpt_path, map_location="cpu")
+        model.load_state_dict(checkpoint["model_state_dict"], strict=False)
         return model
 
 
@@ -448,4 +562,27 @@ class GPTRewardModel(nn.Module):
         # with open('rm_states_keys.txt', 'w') as fp:
         #     for k in model_states_keys:
         #         fp.write(k + '\n')
+        return model
+
+
+class GPTCritic(GPTRewardModel):
+
+    def forward_critic(self,
+                       x: Tensor,
+                       attention_mask: Tensor = None,
+                       num_actions=0):
+        values = super().forward(x, attention_mask)
+        return values[:, :-1].mean(dim=1)
+
+    @classmethod
+    def from_checkpoint(cls,
+                        cfg: TrainingConfig,
+                        ckpt_path: str,
+                        strict=False,
+                        compile=False):
+        model = GPTCritic(cfg)
+        if compile:
+            model = torch.compile(model)
+        checkpoint = torch.load(ckpt_path, map_location="cpu")
+        model.load_state_dict(checkpoint["model_state_dict"], strict=strict)
         return model

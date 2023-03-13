@@ -8,19 +8,14 @@ import json
 from tokenizer import TiktokenTokenizer
 
 
-class AwesomeChatGPTPromptsDataset(Dataset):
-    """
-    https://huggingface.co/datasets/fka/awesome-chatgpt-prompts
-
-    Changing it to Human Assitant conversation
-    """
+class DahoasSFTStaticPromptsDataset(Dataset):
 
     def __init__(self,
                  block_size,
                  max_examples=None,
                  tokenizer_name='tiktoken/gpt2') -> None:
         super().__init__()
-        dataset = load_dataset("fka/awesome-chatgpt-prompts")
+        dataset = load_dataset("Dahoas/rm-static", split="train")
         self.prompts = []
 
         if tokenizer_name == "huggingface/gpt2":
@@ -35,14 +30,15 @@ class AwesomeChatGPTPromptsDataset(Dataset):
         print(f"Loading AwesomeChatGPTPromptsDataset")
         for data in dataset:
             cnt += 1
-            prompt = f"Human: {data['prompt']}\nAssistant:"
+            prompt = data['prompt']
             tokens = tokenizer(prompt,
                                max_length=block_size,
                                padding="max_length",
                                truncation=True,
                                return_tensors="pt")
 
-            self.prompts.append([tokens['input_ids'], tokens['input_ids']])
+            self.prompts.append(
+                [tokens['input_ids'], tokens['attention_mask']])
 
             if max_examples and cnt >= max_examples:
                 break

@@ -26,21 +26,14 @@ from torch.utils.data.distributed import DistributedSampler
 from torch.distributed.fsdp import (
     FullyShardedDataParallel as FSDP,
     MixedPrecision,
-    BackwardPrefetch,
     ShardingStrategy,
     FullStateDictConfig,
     StateDictType,
 )
 from torch.distributed.fsdp.fully_sharded_data_parallel import (
-    CPUOffload,
-    BackwardPrefetch,
-)
+    CPUOffload, )
 from torch.distributed.fsdp.wrap import (
-    size_based_auto_wrap_policy,
-    transformer_auto_wrap_policy,
-    enable_wrap,
-    wrap,
-)
+    transformer_auto_wrap_policy, )
 # import bitsandbytes as bnb
 
 
@@ -82,10 +75,10 @@ class PPOTrainer(Trainer):
 
     def __init__(self, cfg: TrainingConfig, actor: GPTActor, critic: GPTCritic,
                  reward_model: GPTRewardModel, sft_model: GPTActor,
-                 train_dataset, batch_size) -> None:
+                 train_dataset) -> None:
         super().__init__()
         self.cfg = cfg
-        self.run_name = f"ppo_{datetime.now().strftime('%Y%m%d%H%M')}"
+        self.run_name = f"ppo_{cfg.exp_name}_{datetime.now().strftime('%Y%m%d%H%M')}"
         self.device = "cuda"
         self.max_new_tokens = 128
 
@@ -102,7 +95,7 @@ class PPOTrainer(Trainer):
         self.actor_criterion = PolicyLoss()
         self.critic_criterion = ValueLoss()
         self.train_dataloader = DataLoader(train_dataset,
-                                           batch_size=batch_size,
+                                           batch_size=cfg.batch_size,
                                            num_workers=8,
                                            pin_memory=True)
         self.actor_optimizer = optim.Adam(self.actor.parameters(),
@@ -116,7 +109,7 @@ class PPOTrainer(Trainer):
 
         self.writer = SummaryWriter(f'./runs/{self.run_name}/logs',
                                     max_queue=50)
-        self.total_epochs = 1
+        self.total_epochs = cfg.total_epochs
         self.debug = False
         self.save_freq = 10000
         self.dtype = torch.float16
@@ -125,7 +118,6 @@ class PPOTrainer(Trainer):
             "max_new_tokens": self.max_new_tokens,
             "train_dataset": type(train_dataset).__name__,
             "train_dataset_len": len(train_dataset),
-            "batch_size": batch_size,
             "dtype": str(self.dtype),
             **cfg.dict(),
         }
@@ -292,46 +284,42 @@ class PPOTrainer(Trainer):
 
 class SFTTrainer(Trainer):
 
-    def __init__(self, cfg, device, model: nn.Module, train_dataset,
-                 test_dataset, batch_size, max_steps, finetune_method) -> None:
+    def __init__(self, cfg: TrainingConfig, device, model: nn.Module,
+                 train_dataset, test_dataset) -> None:
         super().__init__()
         self.cfg = cfg
-        self.run_name = f"sft_{datetime.now().strftime('%Y%m%d%H%M')}"
+        self.run_name = f"sft_{cfg.exp_name}_{datetime.now().strftime('%Y%m%d%H%M')}"
         self.device = device
         assert self.device == 'cuda'
-        self.max_steps = max_steps
+        self.max_steps = cfg.max_steps
         self.eval_freq = 1
         self.save_freq = 20000
         self.train_dataloader = iter(
             DataLoader(train_dataset,
-                       batch_size=batch_size,
+                       batch_size=cfg.batch_size,
                        num_workers=6,
                        pin_memory=True))
         self.test_dataloader = iter(
             DataLoader(test_dataset,
-                       batch_size=batch_size,
+                       batch_size=cfg.batch_size,
                        num_workers=6,
                        pin_memory=True))
         self.model = model
         self.criterion = CrossEntropyLoss()
 
-        lr = cfg.lr
-        self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
-        self.grad_clip = 1.0
+        self.optimizer = optim.Adam(self.model.parameters(), lr=cfg.lr)
+        self.grad_clip = cfg.grad_clip
         self.dtype = torch.float16
 
-        self.finetune_method = finetune_method
+        self.finetune_method = cfg.finetune_method
 
         hp = {
-            "grad_clip": self.grad_clip,
-            "learning_rate": lr,
             "dtype": str(self.dtype),
-            "batch_size": batch_size,
-            "model": cfg.model_name,
-            "lora_rank": model.cfg.lora_rank,
-            "block_size": model.cfg.block_size,
-            "finetune_method": finetune_method,
-            "dropout": model.cfg.dropout_rate
+            "train_dataset": type(train_dataset).__name__,
+            "train_dataset_len": len(train_dataset),
+            "test_dataset": type(test_dataset).__name__,
+            "test_dataset_len": len(test_dataset),
+            **cfg.dict(),
         }
         self.save_hyperparams(hp)
 
@@ -385,50 +373,39 @@ class SFTTrainer(Trainer):
 
 class RewardModelTrainer(Trainer):
 
-    def __init__(self,
-                 cfg: TrainingConfig,
-                 device,
-                 model: nn.Module,
-                 train_dataset,
-                 test_dataset,
-                 total_epochs,
-                 batch_size,
-                 finetune_method=False) -> None:
+    def __init__(self, cfg: TrainingConfig, device, model: nn.Module,
+                 train_dataset, test_dataset) -> None:
         super().__init__()
-        self.run_name = f"rm_{datetime.now().strftime('%Y%m%d%H%M')}"
+        self.run_name = f"rm_{cfg.exp_name}_{datetime.now().strftime('%Y%m%d%H%M')}"
         self.device = device
         assert self.device == 'cuda'
-        self.total_epochs = total_epochs
+        self.total_epochs = cfg.total_epochs
         self.eval_freq = 1
         self.save_freq = 30000
         self.model = model
         self.train_dataloader = DataLoader(train_dataset,
-                                           batch_size=batch_size,
+                                           batch_size=cfg.batch_size,
                                            num_workers=8,
                                            shuffle=True,
                                            pin_memory=True)
         self.test_dataloader = DataLoader(test_dataset,
-                                          batch_size=batch_size,
+                                          batch_size=cfg.batch_size,
                                           num_workers=8,
                                           pin_memory=True)
         self.model = model
         self.criterion = KPairwiseLoss()
-        self.finetune_method = finetune_method
-        lr = 0.0001
-        self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
-        self.grad_clip = 1.0
+        self.finetune_method = cfg.finetune_method
+        self.optimizer = optim.Adam(self.model.parameters(), lr=cfg.lr)
+        self.grad_clip = cfg.grad_clip
         self.dtype = torch.float16
 
         hp = {
-            "grad_clip": self.grad_clip,
-            "learning_rate": lr,
             "dtype": str(self.dtype),
-            "batch_size": batch_size,
-            "model": cfg.model_name,
-            "lora_rank": model.cfg.lora_rank,
-            "block_size": model.cfg.block_size,
-            "finetune_method": finetune_method,
-            "dropout": model.cfg.dropout_rate
+            "train_dataset": type(train_dataset).__name__,
+            "train_dataset_len": len(train_dataset),
+            "test_dataset": type(test_dataset).__name__,
+            "test_dataset_len": len(test_dataset),
+            **cfg.dict(),
         }
         self.save_hyperparams(hp)
 
@@ -526,7 +503,6 @@ class AcceleratorRewardModelTrainer(Trainer):
                  train_dataset,
                  test_dataset,
                  total_epochs,
-                 batch_size,
                  finetune_method=False) -> None:
         super().__init__()
         self.run_name = f"rm_{datetime.now().strftime('%Y%m%d%H%M')}"
@@ -537,32 +513,30 @@ class AcceleratorRewardModelTrainer(Trainer):
         self.save_freq = 30000
         self.model = model
         self.train_dataloader = DataLoader(train_dataset,
-                                           batch_size=batch_size,
+                                           batch_size=cfg.batch_size,
                                            num_workers=8,
                                            shuffle=True,
                                            pin_memory=True)
         self.test_dataloader = DataLoader(test_dataset,
-                                          batch_size=batch_size,
+                                          batch_size=cfg.batch_size,
                                           num_workers=8,
                                           pin_memory=True)
         self.model = model
         self.criterion = KPairwiseLoss()
         self.finetune_method = finetune_method
-        lr = 0.0001
+        lr = cfg.lr
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
-        self.grad_clip = 1.0
+        self.grad_clip = cfg.grad_clip
         self.dtype = torch.float16
 
         hp = {
-            "grad_clip": self.grad_clip,
-            "learning_rate": lr,
             "dtype": str(self.dtype),
-            "batch_size": batch_size,
-            "model": cfg.model_name,
-            "lora_rank": model.cfg.lora_rank,
-            "block_size": model.cfg.block_size,
             "finetune_method": finetune_method,
-            "dropout": model.cfg.dropout_rate
+            "train_dataset": type(train_dataset).__name__,
+            "train_dataset_len": len(train_dataset),
+            "test_dataset": type(test_dataset).__name__,
+            "test_dataset_len": len(test_dataset),
+            **cfg.dict(),
         }
         self.save_hyperparams(hp)
 
@@ -663,7 +637,6 @@ class FSDPRewardModelTrainer(Trainer):
                  train_dataset,
                  test_dataset,
                  total_epochs,
-                 batch_size,
                  rank,
                  world_size,
                  finetune_method=False) -> None:
@@ -686,12 +659,12 @@ class FSDPRewardModelTrainer(Trainer):
                                                rank=rank,
                                                num_replicas=world_size)
         self.train_dataloader = DataLoader(train_dataset,
-                                           batch_size=batch_size,
+                                           batch_size=cfg.batch_size,
                                            num_workers=8,
                                            shuffle=True,
                                            pin_memory=True)
         self.test_dataloader = DataLoader(test_dataset,
-                                          batch_size=batch_size,
+                                          batch_size=cfg.batch_size,
                                           num_workers=8,
                                           pin_memory=True)
         torch.cuda.set_device(rank)
@@ -704,18 +677,22 @@ class FSDPRewardModelTrainer(Trainer):
         self.scaler = GradScaler(enabled=self.dtype != torch.float32)
         self.writer = SummaryWriter(f'./runs/{self.run_name}/logs',
                                     max_queue=40)
-        self.grad_clip = 1.0
+        self.grad_clip = cfg.grad_clip
 
         hp = {
             "grad_clip": self.grad_clip,
             "learning_rate": cfg.lr,
             "dtype": str(self.dtype),
-            "batch_size": batch_size,
+            "batch_size": cfg.batch_size,
             "model": cfg.model_name,
             "lora_rank": model.cfg.lora_rank,
             "block_size": model.cfg.block_size,
             "finetune_method": finetune_method,
-            "dropout": model.cfg.dropout_rate
+            "dropout": model.cfg.dropout_rate,
+            "train_dataset": type(train_dataset).__name__,
+            "train_dataset_len": len(train_dataset),
+            "test_dataset": type(test_dataset).__name__,
+            "test_dataset_len": len(test_dataset),
         }
         self.save_hyperparams(hp)
 

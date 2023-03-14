@@ -26,6 +26,7 @@ def train_fsdp(rank, world_size, pretrain):
     device = "cuda"
     cfg = get_configs("gpt2-xl")
     cfg.activation_checkpointing = True
+    cfg.batch_size = 1
     rm = GPTRewardModel.from_pretrained(cfg)
     train_ds = DahoasRMStaticDataset(block_size=1024,
                                      split='train',
@@ -41,7 +42,6 @@ def train_fsdp(rank, world_size, pretrain):
                                      train_ds,
                                      test_ds,
                                      total_epochs=1,
-                                     batch_size=1,
                                      rank=rank,
                                      world_size=world_size,
                                      finetune_method=False)
@@ -54,6 +54,7 @@ def train_accelerate():
     device = "cuda"
     cfg = get_configs("gpt2-xl")
     rm = GPTRewardModel.from_pretrained(cfg)
+    cfg.batch_size = 1
     train_ds = DahoasRMStaticDataset(block_size=1024,
                                      split='train',
                                      max_examples=20,
@@ -68,43 +69,41 @@ def train_accelerate():
                                             train_ds,
                                             test_ds,
                                             total_epochs=1,
-                                            batch_size=1,
                                             finetune_method=False)
     trainer.fit()
 
 
-def train(pretrain):
+def train(pretrain, batch_size, exp_name):
     device = 'cuda'
-    cfg = get_configs("gpt2")
+    cfg = get_configs("gpt2-medium")
+    cfg.batch_size = batch_size
+    cfg.pretrain = pretrain
+    cfg.total_epochs = 1
+    cfg.exp_name = exp_name
 
-    if pretrain == "gpt2":
+    if pretrain == "huggingface":
         rm = GPTRewardModel.from_pretrained(cfg)
     else:
-        rm = GPTRewardModel.from_backbone_checkpoint(
-            cfg, "./runs/sft_1678085469/original_sft_1678085469_step100000.pt")
+        rm = GPTRewardModel.from_backbone_checkpoint(cfg, pretrain)
+
     train_ds = DahoasRMStaticDataset(block_size=1024,
                                      split='train',
-                                     max_examples=20,
+                                     max_examples=None,
                                      tokenizer_name="tiktoken/gpt2")
     test_ds = DahoasRMStaticDataset(block_size=1024,
                                     split='test',
-                                    max_examples=20,
+                                    max_examples=None,
                                     tokenizer_name="tiktoken/gpt2")
-    trainer = RewardModelTrainer(cfg,
-                                 device,
-                                 rm,
-                                 train_ds,
-                                 test_ds,
-                                 batch_size=1,
-                                 total_epochs=1,
-                                 finetune_method="lora")
+    trainer = RewardModelTrainer(cfg, device, rm, train_ds, test_ds)
     trainer.fit()
 
 
 @click.command()
-@click.option('--strategy', '-s')
-@click.option('--pretrain', '-p')
-def main(strategy, pretrain):
+@click.option('--strategy', '-s', default="naive")
+@click.option('--pretrain', '-p', default="huggingface")
+@click.option('--batch-size', '-b', default=1)
+@click.option('--exp-name', '-n', default="default")
+def main(strategy, pretrain, batch_size, exp_name):
     torch.manual_seed(1234)
 
     if strategy == "fsdp":
@@ -116,7 +115,7 @@ def main(strategy, pretrain):
     elif strategy == "accelerate":
         train_accelerate()
     elif strategy == "naive":
-        train(pretrain)
+        train(pretrain, batch_size, exp_name)
 
 
 if __name__ == "__main__":

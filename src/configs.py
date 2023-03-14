@@ -3,6 +3,7 @@ from dataclasses import dataclass, asdict
 
 @dataclass
 class TrainingConfig:
+    # Transformer
     n_layers: int
     n_heads: int
     embedding_dim: int
@@ -12,6 +13,18 @@ class TrainingConfig:
     vocab_size: int
     model_name: str
     hf_model: str
+    grad_clip: float = 1.0
+    exp_name: str = ""
+    batch_size: int = 1
+    lr: float = 0.0001
+    lora_rank: int = 0
+    pretrain: str = "huggingface"
+    activation_checkpointing: bool = False
+    finetune_method: str = ""
+    total_epochs: int = 1
+    # SFT specific
+    max_steps: int = 20000
+    # PPO specific
     actor_weights: str = ""
     critic_weights: str = ""
     reward_model_weights: str = ""
@@ -21,10 +34,6 @@ class TrainingConfig:
     kl_beta: float = 0.02
     adam_beta1: float = 0.9
     adam_beta2: float = 0.95
-    lr: float = 0.0001
-    lora_rank: int = 0
-    pretrain: str = "huggingface"
-    activation_checkpointing: bool = False
 
     def dict(self):
         return {k: str(v) for k, v in asdict(self).items()}

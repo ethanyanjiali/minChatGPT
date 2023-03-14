@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 
 
 @dataclass
@@ -12,12 +12,25 @@ class TrainingConfig:
     vocab_size: int
     model_name: str
     hf_model: str
+    actor_weights: str = ""
+    critic_weights: str = ""
+    reward_model_weights: str = ""
+    sft_model_weights: str = ""
+    actor_lr: float = 5e-6
+    critic_lr: float = 9e-6
+    kl_beta: float = 0.02
+    adam_beta1: float = 0.9
+    adam_beta2: float = 0.95
     lr: float = 0.0001
     lora_rank: int = 0
     pretrain: str = "huggingface"
+    activation_checkpointing: bool = False
+
+    def dict(self):
+        return {k: str(v) for k, v in asdict(self).items()}
 
 
-def get_configs(name):
+def get_configs(name) -> TrainingConfig:
     if name == "gpt2-medium":
         return TrainingConfig(
             n_layers=24,
@@ -65,6 +78,18 @@ def get_configs(name):
             block_size=1024,
             vocab_size=50257,
             model_name="gpt2-large",
+            hf_model="gpt2-large",
+        )
+    elif name == 'gpt2-large/dropout':
+        return TrainingConfig(
+            n_layers=36,
+            n_heads=20,
+            embedding_dim=1280,
+            dropout_rate=0,
+            use_bias=True,
+            block_size=1024,
+            vocab_size=50257,
+            model_name="gpt2-large/dropout",
             hf_model="gpt2-large",
         )
     elif name == 'gpt2-large/lora':

@@ -3,7 +3,7 @@ import click
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from trainers import RewardModelTrainer, FSDPRewardModelTrainer
+from trainers import RewardModelTrainer, FSDPRewardModelTrainer, AcceleratorRewardModelTrainer
 from configs import get_configs
 from gpt import GPTRewardModel
 from dataset import DahoasRMStaticDataset
@@ -25,6 +25,7 @@ def train_fsdp(rank, world_size, pretrain):
     setup(rank, world_size)
     device = "cuda"
     cfg = get_configs("gpt2-xl")
+    cfg.activation_checkpointing = True
     rm = GPTRewardModel.from_pretrained(cfg)
     train_ds = DahoasRMStaticDataset(block_size=1024,
                                      split='train',
@@ -49,9 +50,33 @@ def train_fsdp(rank, world_size, pretrain):
     cleanup()
 
 
+def train_accelerate():
+    device = "cuda"
+    cfg = get_configs("gpt2-xl")
+    rm = GPTRewardModel.from_pretrained(cfg)
+    train_ds = DahoasRMStaticDataset(block_size=1024,
+                                     split='train',
+                                     max_examples=20,
+                                     tokenizer_name="tiktoken/gpt2")
+    test_ds = DahoasRMStaticDataset(block_size=1024,
+                                    split='test',
+                                    max_examples=20,
+                                    tokenizer_name="tiktoken/gpt2")
+    trainer = AcceleratorRewardModelTrainer(cfg,
+                                            device,
+                                            rm,
+                                            train_ds,
+                                            test_ds,
+                                            total_epochs=1,
+                                            batch_size=1,
+                                            finetune_method=False)
+    trainer.fit()
+
+
 def train(pretrain):
     device = 'cuda'
-    cfg = get_configs("gpt2-medium/lora")
+    cfg = get_configs("gpt2")
+
     if pretrain == "gpt2":
         rm = GPTRewardModel.from_pretrained(cfg)
     else:
@@ -77,18 +102,20 @@ def train(pretrain):
 
 
 @click.command()
-@click.option('--mode', '-m')
+@click.option('--strategy', '-s')
 @click.option('--pretrain', '-p')
-def main(mode, pretrain):
+def main(strategy, pretrain):
     torch.manual_seed(1234)
 
-    if mode == "fsdp":
+    if strategy == "fsdp":
         WORLD_SIZE = torch.cuda.device_count()
         mp.spawn(train_fsdp,
                  args=(WORLD_SIZE, pretrain),
                  nprocs=WORLD_SIZE,
                  join=True)
-    elif mode == "naive":
+    elif strategy == "accelerate":
+        train_accelerate()
+    elif strategy == "naive":
         train(pretrain)
 
 

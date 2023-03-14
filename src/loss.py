@@ -14,21 +14,24 @@ class PolicyLoss(nn.Module):
         super().__init__(*args, **kwargs)
         self.eps = eps
 
-    def forward(self, new_actor_log_probs, old_actor_log_probs, advantage):
+    def forward(self, new_actor_log_probs: torch.Tensor,
+                old_actor_log_probs: torch.Tensor, advantage: torch.Tensor):
         # reverse the log to get π_new(a_t|s_t) / π_old(a_t|s_t)
-        ratio: torch.Tensor = (new_actor_log_probs - old_actor_log_probs).exp()
+        ratio = (new_actor_log_probs -
+                 old_actor_log_probs).exp()    # (B, num_actions)
         surrogate_objectives = torch.min(
             ratio * advantage,
-            ratio.clamp(1 - self.eps, 1 + self.eps) * advantage)
+            ratio.clamp(1 - self.eps, 1 + self.eps) *
+            advantage)    # (B, num_actions)
         # minimize the negative loss -> maximize the objective
-        loss = -surrogate_objectives
+        loss = -surrogate_objectives    # (B, num_actions)
         return loss.mean()
 
 
 class ValueLoss(nn.Module):
 
-    def forward(self, value, reward):
-        return F.mse_loss(value, reward)
+    def forward(self, value: torch.Tensor, reward: torch.Tensor):
+        return F.mse_loss(value, reward, reduction="none")    # (B, 1)
 
 
 class CrossEntropyLoss(nn.Module):

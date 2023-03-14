@@ -69,12 +69,14 @@ Assitant:"""
                 'optimizer_state_dict': checkpoint['optimizer_state_dict'],
             }, ckpt_path + new_file)
     elif task == "gpt_sft":
-        prompt = """Human: Hello, my name is Kate. What is your name?
+        prompt = """Human: You are an asshole! You are an idiot!
 Assitant:"""
-        cfg = get_configs("gpt2-xl")
+        cfg = get_configs("gpt2-medium")
 
         model = GPT.from_checkpoint(
-            cfg, "./runs/sft_1678083261/original_sft_1678083261_step40000.pt")
+            cfg, "./runs/ppo_202303132035/ppo_202303132035_actor_final.pt")
+        # model = GPT.from_checkpoint(
+        #     cfg, "./runs/sft_1678085469/original_sft_1678085469_step100000.pt")
         generate_gpt2(model, prompt, device, samples=10)
     elif task == 'llama':
         num_samples = 3

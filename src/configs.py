@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 
 
 @dataclass
@@ -12,15 +12,25 @@ class TrainingConfig:
     vocab_size: int
     model_name: str
     hf_model: str
-    actor_lr: float = 0.0001
-    critic_lr: float = 0.0001
+    actor_weights: str = ""
+    critic_weights: str = ""
+    reward_model_weights: str = ""
+    sft_model_weights: str = ""
+    actor_lr: float = 5e-6
+    critic_lr: float = 9e-6
+    kl_beta: float = 0.02
+    adam_beta1: float = 0.9
+    adam_beta2: float = 0.95
     lr: float = 0.0001
     lora_rank: int = 0
     pretrain: str = "huggingface"
     activation_checkpointing: bool = False
 
+    def dict(self):
+        return {k: str(v) for k, v in asdict(self).items()}
 
-def get_configs(name):
+
+def get_configs(name) -> TrainingConfig:
     if name == "gpt2-medium":
         return TrainingConfig(
             n_layers=24,

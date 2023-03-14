@@ -366,16 +366,11 @@ class GPT(nn.Module):
         input_masks: (B, T)
         """
         B, T = idx.size()
-        input_lengths = torch.count_nonzero(input_masks, dim=1)
-        print("input_masks", input_masks)
-        print("input_lengths", input_lengths)
-        min_input_length = torch.min(input_lengths)
-        max_input_length = torch.max(input_lengths)
-        print("min_input_length", min_input_length)
-        print("max_input_length", max_input_length)
+        input_lengths = torch.count_nonzero(input_masks, dim=1)    # (B)
+        min_input_length = torch.min(input_lengths)    # (B)
+        max_input_length = torch.max(input_lengths)    # (B)
         total_length = min(self.cfg.block_size,
                            max_input_length + max_new_tokens)
-        print("idx", idx.shape)
 
         if T < total_length:
             idx = F.pad(idx, (0, total_length - T), self.tokenizer.pad_token)
@@ -393,10 +388,6 @@ class GPT(nn.Module):
             probs = F.softmax(logits, dim=-1)
             # sample from the distribution
             next_id = torch.multinomial(probs, num_samples=1).view(-1)
-            # print("curr_pos", curr_pos)
-            # print("input_masks[:, curr_pos]", input_masks[:, curr_pos].shape)
-            # print("idx[:, curr_pos]", idx[:, curr_pos].shape)
-            # print("next_id", next_id.shape)
             next_id = torch.where(input_masks[:, curr_pos], idx[:, curr_pos],
                                   next_id)
             # append sampled index to the running sequence and continue
@@ -441,16 +432,14 @@ class GPTActor(GPT):
         """
         logits = super().forward(
             x, attention_mask)    # logits = (B, T, voca_size)
-        log_prob_all_vocab = F.log_softmax(
-            logits[:, :-1, :], dim=2
-        )    # no need to know the logits of last token because we don't have the index of that token in x
-        index = x[:, 1:].unsqueeze(-1)
-        print("log_prob_all_vocab", log_prob_all_vocab.shape)
-        print("index", index.shape)
+        log_prob_all_vocab = F.log_softmax(logits[:, :-1, :],
+                                           dim=2)    # (B, T-1, vocab_size)
+        # no need to know the logits of last token because we don't have the index of that token in x
+        index = x[:, 1:].unsqueeze(-1)    # (B, T-1, 1)
         log_prob_output = log_prob_all_vocab.gather(
             dim=2,
             index=index)    # teacher-forcing, get the prob of each gt token
-        return log_prob_output[:, -num_actions:]
+        return log_prob_output[:, -num_actions:, 0]    # (B, T)
 
     def batch_generate(self,
                        idx,
@@ -462,10 +451,8 @@ class GPTActor(GPT):
         idx: Shape of (B, T)
         """
         completions = super().batch_generate(idx, input_masks, max_new_tokens,
-                                             temperature, top_k)
-        print("completions", completions.shape)
-        print("completions != self.tokenizer.pad_token",
-              (completions != self.tokenizer.pad_token).shape)
+                                             temperature,
+                                             top_k)    # completions = (B, T)
         attention_mask = torch.where(completions != self.tokenizer.pad_token,
                                      torch.ones_like(completions),
                                      torch.zeros_like(completions))
@@ -570,9 +557,14 @@ class GPTCritic(GPTRewardModel):
     def forward_critic(self,
                        x: Tensor,
                        attention_mask: Tensor = None,
-                       num_actions=0):
-        values = super().forward(x, attention_mask)
-        return values[:, :-1].mean(dim=1)
+                       num_actions=0) -> torch.Tensor:
+        """
+        x: (B, T)
+        """
+        hidden = self.backbone(x, attention_mask)    # (B, T, vocab_size)
+        values = self.value_head(hidden)    # (B, T, 1)
+        values = values[:, :-1].mean(dim=1)
+        return values    # (B, 1)
 
     @classmethod
     def from_checkpoint(cls,

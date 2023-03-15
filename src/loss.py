@@ -31,7 +31,7 @@ class PolicyLoss(nn.Module):
 class ValueLoss(nn.Module):
 
     def forward(self, value: torch.Tensor, reward: torch.Tensor):
-        return F.mse_loss(value, reward, reduction="none")    # (B, 1)
+        return F.mse_loss(value, reward, reduction="mean")    # (B, 1)
 
 
 class CrossEntropyLoss(nn.Module):

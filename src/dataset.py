@@ -38,7 +38,7 @@ class DahoasSFTStaticPromptsDataset(Dataset):
                                return_tensors="pt")
 
             self.prompts.append(
-                [tokens['input_ids'], tokens['attention_mask']])
+                [tokens['input_ids'], tokens['attention_mask'], len(tokens["input_ids"])])
 
             if max_examples and cnt >= max_examples:
                 break
@@ -56,7 +56,7 @@ class DahoasSFTStaticPromptsDataset(Dataset):
         return len(self.prompts)
 
     def __getitem__(self, idx):
-        return self.prompts[idx][0], self.prompts[idx][1]    # (1, T), (1, T)
+        return self.prompts[idx][0], self.prompts[idx][1], self.prompts[idx][2]  # (1, T), (1, T)
 
 
 class EYLSFTStaticDataset(Dataset):
@@ -223,7 +223,7 @@ class DahoasRMStaticDataset(Dataset):
         return len(self.pairs)
 
     def __getitem__(self, idx):
-        return self.pairs[idx], self.masks[idx]    # (2, T), (2, T)
+        return self.pairs[idx], self.masks[idx]  # (2, T), (2, T)
 
 
 class AnthropicHHRLHFDataset(Dataset):
@@ -289,4 +289,4 @@ class AnthropicHHRLHFDataset(Dataset):
         return len(self.pairs)
 
     def __getitem__(self, idx):
-        return self.pairs[idx], self.masks[idx]    # (2, T), (2, T)
+        return self.pairs[idx], self.masks[idx]  # (2, T), (2, T)

@@ -10,6 +10,7 @@ from configs import TrainingConfig, get_configs
 from torch.utils.checkpoint import checkpoint
 from tokenizer import TiktokenTokenizer
 
+
 # [1] Attention is all you need
 # [2] Improving Language Understanding by Generated Pre-Training
 # [3] Note 10: Self-Attention & Transformers
@@ -57,34 +58,34 @@ class MaskedMultiheadSelfAttention(nn.Module):
         """
         B, T, C = x.size()
         # Project x three times and split into Q,K,V
-        x3 = self.qkv_projection(x)    # (B, T, 3C)
+        x3 = self.qkv_projection(x)  # (B, T, 3C)
         Q, K, V = x3.split(self.cfg.embedding_dim,
-                           dim=2)    # (B, T, C) for each
+                           dim=2)  # (B, T, C) for each
 
         # Prepare Q,K,V into desired shape for multi-head attention
         # Multi-head attention is equivalent to single-head attention on sequence-tensor form
         # see 3.1 in [3]
         Q = Q.view(B, T, self.cfg.n_heads,
-                   C // self.cfg.n_heads)    # (B, T, h, h_dim)
-        Q = Q.transpose(1, 2)    # (B, h, T, h_dim)
+                   C // self.cfg.n_heads)  # (B, T, h, h_dim)
+        Q = Q.transpose(1, 2)  # (B, h, T, h_dim)
         K = K.view(B, T, self.cfg.n_heads,
-                   C // self.cfg.n_heads)    # (B, T, h, h_dim)
-        K = K.transpose(1, 2)    # (B, h, T, h_dim)
+                   C // self.cfg.n_heads)  # (B, T, h, h_dim)
+        K = K.transpose(1, 2)  # (B, h, T, h_dim)
         V = V.view(B, T, self.cfg.n_heads,
-                   C // self.cfg.n_heads)    # (B, T, h, h_dim)
-        V = V.transpose(1, 2)    # (B, h, T, h_dim)
+                   C // self.cfg.n_heads)  # (B, T, h, h_dim)
+        V = V.transpose(1, 2)  # (B, h, T, h_dim)
 
         # (B, h, T, h_dim) @ (B, h, h_dim, T) -> (B, h, T, T)
         attention = Q @ K.transpose(2, 3)
         attention *= 1.0 / math.sqrt(K.size(-1))
         # In transformer decoder, one word can only attend to words before itself
         attention = attention.masked_fill(self.mask[:, :, :T, :T] == 0,
-                                          float('-inf'))    # (B, h, T, T)
+                                          float('-inf'))  # (B, h, T, T)
         if attention_mask is not None:
             # https://github.com/huggingface/transformers/blob/c7f3abc257af9dfb6006a76f2b09b48355322d4d/src/transformers/models/gpt2/modeling_gpt2.py#L805
             # also, we don't need attend to padding tokens
             attention_mask = attention_mask[:, None,
-                                            None, :]    # (B, T) -> (B, 1, 1, T)
+                             None, :]  # (B, T) -> (B, 1, 1, T)
             attention_mask = (1.0 - attention_mask) * torch.finfo(
                 attention.dtype).min
             # This will broadcast to each row of the last dimension of attention map
@@ -97,7 +98,7 @@ class MaskedMultiheadSelfAttention(nn.Module):
             #    [1, 1,    1-float.min]]]]]
             attention = attention + attention_mask
 
-        attention = F.softmax(attention, dim=-1)    # (B, h, T, T)
+        attention = F.softmax(attention, dim=-1)  # (B, h, T, T)
         attention = self.attention_dropout(attention)
         # (B, h, T, T) @ (B, h, T, h_dim) -> (B, h, T, h_dim)
         # V weighted by attention
@@ -177,7 +178,7 @@ class TransformerDecoder(nn.Module):
         super().__init__()
         self.cfg = cfg
         self.token_embedding_layer = nn.Embedding(
-            cfg.vocab_size, cfg.embedding_dim)    # (Vocab, d)
+            cfg.vocab_size, cfg.embedding_dim)  # (Vocab, d)
         self.postion_embedding_layer = nn.Embedding(cfg.block_size,
                                                     cfg.embedding_dim)
         self.input_dropout = nn.Dropout(cfg.dropout_rate)
@@ -189,9 +190,9 @@ class TransformerDecoder(nn.Module):
     def forward(self, x: Tensor, attention_mask: Tensor = None):
         B, T = x.size()
         pos = torch.arange(0, T, dtype=torch.long,
-                           device=x.device).unsqueeze(0)    # (1, T)
-        token_embeddings = self.token_embedding_layer(x)    # (B, T, d)
-        pos_embeddings = self.postion_embedding_layer(pos)    # (B, T, d)
+                           device=x.device).unsqueeze(0)  # (1, T)
+        token_embeddings = self.token_embedding_layer(x)  # (B, T, d)
+        pos_embeddings = self.postion_embedding_layer(pos)  # (B, T, d)
         x = self.input_dropout(token_embeddings + pos_embeddings)
 
         # N decoder blocks
@@ -228,8 +229,8 @@ class GPT(nn.Module):
         """
         x: Shape of (B, T)
         """
-        x = self.transformer(x, attention_mask)    # x = (B, T, embedding_dim)
-        logits = self.lm_head(x)    # logits = (B, T, voca_size)
+        x = self.transformer(x, attention_mask)  # x = (B, T, embedding_dim)
+        logits = self.lm_head(x)  # logits = (B, T, voca_size)
         return logits
 
     @classmethod
@@ -286,9 +287,9 @@ class GPT(nn.Module):
             k for k in model_states.keys() if not k.endswith('.mmsa.mask')
         ]
         model_states_keys = [k for k in model_states_keys if not 'lora' in k]
-        with open('model_states_keys.txt', 'w') as fp:
-            for k in model_states_keys:
-                fp.write(k + '\n')
+        # with open('model_states_keys.txt', 'w') as fp:
+        #     for k in model_states_keys:
+        #         fp.write(k + '\n')
 
         from transformers import GPT2LMHeadModel
         model_pretrained = GPT2LMHeadModel.from_pretrained(cfg.hf_model)
@@ -301,9 +302,9 @@ class GPT(nn.Module):
         pretrained_states_keys = [
             k for k in pretrained_states_keys if not k.endswith('.attn.bias')
         ]
-        with open('pretrained_states_keys.txt', 'w') as fp:
-            for k in pretrained_states_keys:
-                fp.write(k + '\n')
+        # with open('pretrained_states_keys.txt', 'w') as fp:
+        #     for k in pretrained_states_keys:
+        #         fp.write(k + '\n')
 
         assert len(pretrained_states_keys) == len(
             model_states_keys
@@ -358,6 +359,7 @@ class GPT(nn.Module):
     def batch_generate(self,
                        idx: torch.Tensor,
                        input_masks: torch.Tensor,
+                       input_lengths: torch.Tensor,
                        max_new_tokens: int,
                        temperature=1.0,
                        top_k=None):
@@ -366,15 +368,19 @@ class GPT(nn.Module):
         input_masks: (B, T)
         """
         B, T = idx.size()
-        input_lengths = torch.count_nonzero(input_masks, dim=1)    # (B)
-        min_input_length = torch.min(input_lengths)    # (B)
-        max_input_length = torch.max(input_lengths)    # (B)
+        min_input_length = torch.min(input_lengths)  # (B)
+        max_input_length = torch.max(input_lengths)  # (B)
         total_length = min(self.cfg.block_size,
                            max_input_length + max_new_tokens)
-
+        # print("idx before", idx.shape)
         if T < total_length:
-            idx = F.pad(idx, (0, total_length - T), self.tokenizer.pad_token)
+            idx = F.pad(idx, (0, total_length - T), value=self.tokenizer.pad_token)
+            input_masks = F.pad(input_masks, (0, total_length - T), value=0.0)
         input_masks = input_masks.bool()
+        # print("min_input_length", min_input_length)
+        # print("total_length", total_length)
+        # print("input_masks", input_masks.shape)
+        # print("idx", idx.shape)
         for curr_pos in range(min_input_length, total_length):
             # forward the model to get the logits for the index in the sequence
             logits = self(idx[:, :curr_pos])
@@ -431,36 +437,39 @@ class GPTActor(GPT):
         x (B, T)
         """
         logits = super().forward(
-            x, attention_mask)    # logits = (B, T, voca_size)
+            x, attention_mask)  # logits = (B, T, voca_size)
         log_prob_all_vocab = F.log_softmax(logits[:, :-1, :],
-                                           dim=2)    # (B, T-1, vocab_size)
+                                           dim=2)  # (B, T-1, vocab_size)
         # no need to know the logits of last token because we don't have the index of that token in x
-        index = x[:, 1:].unsqueeze(-1)    # (B, T-1, 1)
+        index = x[:, 1:].unsqueeze(-1)  # (B, T-1, 1)
         log_prob_output = log_prob_all_vocab.gather(
             dim=2,
-            index=index)    # teacher-forcing, get the prob of each gt token
-        return log_prob_output[:, -num_actions:, 0]    # (B, T)
+            index=index)  # teacher-forcing, get the prob of each gt token
+        return log_prob_output[:, -num_actions:, 0]  # (B, T)
 
     def batch_generate(self,
                        idx,
                        input_masks: torch.Tensor,
+                       input_lengths: torch.Tensor,
                        max_new_tokens,
                        temperature=1,
                        top_k=None):
         """
         idx: Shape of (B, T)
         """
-        completions = super().batch_generate(idx, input_masks, max_new_tokens,
+        B, T = idx.size()
+        completions = super().batch_generate(idx, input_masks, input_lengths, max_new_tokens,
                                              temperature,
-                                             top_k)    # completions = (B, T)
+                                             top_k)  # completions = (B, T)
         attention_mask = torch.where(completions != self.tokenizer.pad_token,
                                      torch.ones_like(completions),
                                      torch.zeros_like(completions))
+        action_mask = torch.ones_like(completions, dtype=torch.bool)
+        action_mask[:, :T] = 0.0
+        action_mask = action_mask[:, 1:]
         # we can only take the minimum among all instances in this batch as common num_actions
-        num_actions = torch.min(
-            torch.count_nonzero(attention_mask, dim=1) -
-            torch.count_nonzero(input_masks, dim=1))    # num_actions -> scalar
-        return completions, attention_mask, num_actions
+        num_actions = completions.size(1) - T
+        return completions, attention_mask, num_actions, action_mask[:, -num_actions:]
 
     @classmethod
     def from_checkpoint(cls,
@@ -561,10 +570,12 @@ class GPTCritic(GPTRewardModel):
         """
         x: (B, T)
         """
-        hidden = self.backbone(x, attention_mask)    # (B, T, vocab_size)
-        values = self.value_head(hidden)    # (B, T, 1)
-        values = values[:, :-1].mean(dim=1)
-        return values    # (B, 1)
+        hidden = self.backbone(x, attention_mask)  # (B, T, vocab_size)
+        values = self.value_head(hidden).squeeze(-1)  # (B, T, 1)
+        # Vt only depends on st
+        values = values * attention_mask
+        values = values[:, :-num_actions].mean(dim=1)
+        return values  # (B, 1)
 
     @classmethod
     def from_checkpoint(cls,

@@ -1,4 +1,5 @@
 import functools
+from dataclasses import dataclass
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
@@ -34,6 +35,10 @@ from torch.distributed.fsdp.fully_sharded_data_parallel import (
     CPUOffload, )
 from torch.distributed.fsdp.wrap import (
     transformer_auto_wrap_policy, )
+from torch.nn.utils.rnn import pack_sequence, pad_packed_sequence
+from tokenizer import TiktokenTokenizer
+
+
 # import bitsandbytes as bnb
 
 
@@ -65,10 +70,23 @@ class Trainer:
             {
                 'step': step,
                 'model_state_dict':
-                self.model.state_dict(),    # Save the unoptimized model
+                    self.model.state_dict(),  # Save the unoptimized model
                 'optimizer_state_dict': self.optimizer.state_dict(),
             },
             f'./runs/{self.run_name}/{file_name}')
+
+
+@dataclass
+class Experience:
+    completion: torch.Tensor
+    actor_log_probs: torch.Tensor
+    attention_mask: torch.Tensor
+    kl_penalized_reward: torch.Tensor
+    advantage: torch.Tensor
+    num_actions: int
+    estimated_kl: torch.Tensor
+    values: torch.Tensor
+    action_mask: torch.Tensor
 
 
 class PPOTrainer(Trainer):
@@ -94,9 +112,11 @@ class PPOTrainer(Trainer):
         # Separate actor loss from critic loss to save optimizer memory
         self.actor_criterion = PolicyLoss()
         self.critic_criterion = ValueLoss()
+
         self.train_dataloader = DataLoader(train_dataset,
                                            batch_size=cfg.batch_size,
-                                           num_workers=8,
+                                           num_workers=12,
+                                           prefetch_factor=4,
                                            pin_memory=True)
         self.actor_optimizer = optim.Adam(self.actor.parameters(),
                                           lr=cfg.actor_lr,
@@ -112,7 +132,8 @@ class PPOTrainer(Trainer):
         self.total_epochs = cfg.total_epochs
         self.debug = False
         self.save_freq = 10000
-        self.dtype = torch.float16
+        self.dtype = torch.float32
+        self.tokenizer = TiktokenTokenizer("gpt2")
 
         hp = {
             "max_new_tokens": self.max_new_tokens,
@@ -130,7 +151,7 @@ class PPOTrainer(Trainer):
             {
                 'step': step,
                 'model_state_dict':
-                self.orig_actor.state_dict(),    # Save the unoptimized model
+                    self.orig_actor.state_dict(),  # Save the unoptimized model
                 'optimizer_state_dict': self.actor_optimizer.state_dict(),
             },
             f'./runs/{self.run_name}/{file_name}')
@@ -143,11 +164,11 @@ class PPOTrainer(Trainer):
             }, f'./runs/{self.run_name}/{file_name}')
 
     def kl_penalized_reward(
-            self,
-            reward: torch.Tensor,
-            log_prob_rl: torch.Tensor,
-            log_prob_sft: torch.Tensor,
-            action_mask: torch.Tensor = None
+        self,
+        reward: torch.Tensor,
+        log_prob_rl: torch.Tensor,
+        log_prob_sft: torch.Tensor,
+        action_mask: torch.Tensor = None
     ) -> Union[torch.Tensor, torch.Tensor]:
         # log(π_RL(y|x) / π_SFL(y|x)) = log(π_RL(y|x)) - log(π_SFL(y|x))
         ratio = log_prob_rl - log_prob_sft
@@ -157,19 +178,19 @@ class PPOTrainer(Trainer):
             estimated_kl = estimated_kl * action_mask
             estimated_kl.sum(dim=1) / action_mask.sum(dim=1)
         estimated_kl = estimated_kl.mean(
-            dim=1, keepdim=True)    # estimated_kl -> (B, 1)
+            dim=1, keepdim=True)  # estimated_kl -> (B, 1)
         return reward - self.cfg.kl_beta * estimated_kl, estimated_kl
 
     @torch.no_grad()
-    def make_experience(self, idx, input_masks):
+    def make_experience(self, idx, input_masks, input_lengths):
         self.reward_model.eval()
         self.sft_model.eval()
         self.actor.eval()
         self.critic.eval()
 
         # TODO: Batch generate
-        completion, attention_mask, num_actions = self.actor.batch_generate(
-            idx, input_masks, self.max_new_tokens, temperature=1.0, top_k=50)
+        completion, attention_mask, num_actions, action_mask = self.actor.batch_generate(
+            idx, input_masks, input_lengths, self.max_new_tokens, temperature=1.0, top_k=50)
 
         if self.debug:
             print(" --- Make Experience --- ")
@@ -178,106 +199,124 @@ class PPOTrainer(Trainer):
             print("torch.count_nonzero(attention_mask, dim=1)",
                   torch.count_nonzero(attention_mask, dim=1))
             print("num_actions", num_actions)
-            print("idx", idx)
-            print("input_masks", input_masks)
+            print("action_mask", action_mask.shape)
+            print("idx", idx.shape)
+            print("input_masks", input_masks.shape)
 
         actor_log_probs = self.actor.forward_actor(
             completion,
-            attention_mask,    # (B, num_actions)
+            attention_mask,  # (B, num_actions)
             num_actions)
         sft_log_probs = self.sft_model.forward_actor(
-            completion, attention_mask, num_actions)    # (B, num_actions)
-        value = self.critic.forward_critic(completion,
-                                           attention_mask)    #(B, 1)
+            completion, attention_mask, num_actions)  # (B, num_actions)
+        values = self.critic.forward_critic(completion,
+                                            attention_mask, num_actions).view(-1, 1)  # (B, 1)
         reward = self.reward_model(completion,
-                                   attention_mask).view(-1, 1)    # (B, 1)
+                                   attention_mask)  # (B, 1)
 
         if self.debug:
             print("actor_log_probs", actor_log_probs.shape)
             print("sft_log_probs", sft_log_probs.shape)
-            print("value", value.shape)
+            print("values", values.shape)
             print("reward", reward.shape)
 
         kl_penalized_reward, estimated_kl = self.kl_penalized_reward(
             reward, actor_log_probs, sft_log_probs)
-        advantage = kl_penalized_reward - value
+        advantage = kl_penalized_reward - values
 
         if self.debug:
             print("kl_penalized_reward", kl_penalized_reward)
-            print("advantage", advantage)
+            print("advantage", advantage.shape)
 
-        return completion, actor_log_probs, attention_mask, kl_penalized_reward, advantage, num_actions, estimated_kl
+        return Experience(
+            completion, actor_log_probs, attention_mask, kl_penalized_reward, advantage, num_actions, estimated_kl,
+            values, action_mask)
 
     def fit(self):
         scaler = GradScaler(enabled=self.dtype != torch.float32)
         for epoch in range(self.total_epochs):
-            for step, (prompt, input_masks) in enumerate(
-                    pbar := tqdm(self.train_dataloader)):
-
+            for step, (prompt, input_masks, input_lengths) in enumerate(pbar := tqdm(self.train_dataloader)):
                 prompt, input_masks = prompt.to(self.device), input_masks.to(
                     self.device)
+                if self.debug:
+                    print("prompt", prompt.shape)
+                input_lengths = torch.count_nonzero(input_masks, dim=1)  # (B)
+                max_input_length = torch.max(input_lengths)
+                prompt = prompt[:, :max_input_length]
+                if self.debug:
+                    print("input_lengths", input_lengths)
+                    print("prompt after", prompt.shape)
+
                 total_steps = step + epoch * len(self.train_dataloader)
 
                 with torch.autocast(device_type=self.device,
                                     dtype=self.dtype,
                                     enabled=self.dtype != torch.float32):
-                    completion, actor_log_probs, attention_mask, reward, advantage, num_actions, kl = self.make_experience(
-                        prompt, input_masks)
+                    experience = self.make_experience(
+                        prompt, input_masks, input_lengths)
 
                     self.actor.train()
                     curr_actor_log_probs = self.actor.forward_actor(
-                        completion, attention_mask, num_actions)
+                        experience.completion, experience.attention_mask, experience.num_actions)
 
                     if self.debug:
-                        print(" --- Train Step --- ")
                         print("curr_actor_log_probs",
                               curr_actor_log_probs.shape)
-                        print("actor_log_probs", actor_log_probs.shape)
+                        print("actor_log_probs", experience.actor_log_probs.shape)
 
                     actor_loss = self.actor_criterion(curr_actor_log_probs,
-                                                      actor_log_probs,
-                                                      advantage)
-                    scaler.scale(actor_loss).backward()
-                    scaler.step(self.actor_optimizer)
+                                                      experience.actor_log_probs,
+                                                      experience.advantage,
+                                                      experience.action_mask)
+                    # scaler.scale(actor_loss).backward()
+                    # scaler.step(self.actor_optimizer)
+                    actor_loss.backward()
+                    self.actor_optimizer.step()
                     self.actor_optimizer.zero_grad(set_to_none=True)
                     actor_lossf = actor_loss.item()
 
                     self.critic.train()
-                    curr_value = self.critic.forward_critic(
-                        completion, attention_mask, num_actions)
+                    new_values = self.critic.forward_critic(
+                        experience.completion, experience.attention_mask, experience.num_actions).view(-1, 1)
 
                     if self.debug:
-                        print("curr_value", curr_value.shape)
-                        print("reward", reward.shape)
+                        print("new_value", new_values.shape)
+                        print("reward", experience.kl_penalized_reward.shape)
 
-                    critic_loss = self.critic_criterion(curr_value, reward)
+                    critic_loss = self.critic_criterion(new_values, experience.kl_penalized_reward, experience.values,
+                                                        experience.action_mask)
 
-                    scaler.scale(critic_loss).backward()
-                    scaler.step(self.critic_optimizer)
+                    # scaler.scale(critic_loss).backward()
+                    # scaler.step(self.critic_optimizer)
+                    critic_loss.backward()
+                    self.critic_optimizer.step()
                     self.critic_optimizer.zero_grad(set_to_none=True)
                     critic_lossf = critic_loss.item()
 
-                    scaler.update()
+                    # scaler.update()
 
-                self.writer.add_scalar('KL', kl.mean(), total_steps)
-                self.writer.add_scalar('mean_advantage', advantage.mean(),
+                self.writer.add_scalar('KL', experience.estimated_kl.mean(), total_steps)
+                self.writer.add_scalar('mean_advantage', experience.advantage.mean(),
                                        total_steps)
-                self.writer.add_scalar('mean_reward', reward.mean(),
+                self.writer.add_scalar('mean_reward', experience.kl_penalized_reward.mean(),
                                        total_steps)
-                self.writer.add_scalar('mean_value', curr_value.mean(),
+                self.writer.add_scalar('mean_value', new_values.mean(),
                                        total_steps)
                 self.writer.add_scalar('Loss/actor/step', actor_lossf,
                                        total_steps)
                 self.writer.add_scalar('Loss/critic/step', critic_lossf,
                                        total_steps)
                 pbar.set_description(
-                    f"actor loss {round(actor_lossf,3)}, critic loss {round(critic_lossf,3)}"
+                    f"actor loss {round(actor_lossf, 3)}, critic loss {round(critic_lossf, 3)}"
                 )
 
                 if total_steps == 50 or total_steps == 500 or (
-                        total_steps != 0
-                        and total_steps % self.save_freq == 0):
+                    total_steps != 0
+                    and total_steps % self.save_freq == 0):
                     self.save_states(total_steps)
+
+                if self.debug:
+                    return
 
         self.save_states(None, True)
 
@@ -343,8 +382,8 @@ class SFTTrainer(Trainer):
             y = y.to(self.device)
 
             with torch.autocast(device_type=self.device, dtype=self.dtype):
-                y_hat = opt_model(x)    # (B, 1)
-                loss = self.criterion(y_hat, y)    # (B, 1)
+                y_hat = opt_model(x)  # (B, 1)
+                loss = self.criterion(y_hat, y)  # (B, 1)
 
             if self.grad_clip != 0.0:
                 torch.nn.utils.clip_grad_norm_(opt_model.parameters(),
@@ -359,7 +398,7 @@ class SFTTrainer(Trainer):
             iter_time = time.time() - t0
             t0 = time.time()
             print(
-                f"step {step}, batch loss {round(lossf,3)}, {round(1.0/iter_time, 2)} iters/s"
+                f"step {step}, batch loss {round(lossf, 3)}, {round(1.0 / iter_time, 2)} iters/s"
             )
             writer.add_scalar('Loss/train/step', lossf, step)
 
@@ -422,7 +461,7 @@ class RewardModelTrainer(Trainer):
         for epoch in range(self.total_epochs):
             opt_model.train()
             for step, (completions, attention_masks) in enumerate(
-                    pbar := tqdm(self.train_dataloader)):
+                pbar := tqdm(self.train_dataloader)):
                 total_steps = step + epoch * len(self.train_dataloader)
                 completions = completions.to(self.device)
                 attention_masks = attention_masks.to(self.device)
@@ -432,13 +471,13 @@ class RewardModelTrainer(Trainer):
                     # TODO: Support gradient accumulation
                     positive_scores = opt_model(
                         completions[:, 0, :],
-                        attention_masks[:, 0, :])    # (B, 1)
+                        attention_masks[:, 0, :])  # (B, 1)
                     negative_scores = opt_model(
                         completions[:, 1, :],
-                        attention_masks[:, 1, :])    # (B, 1)
+                        attention_masks[:, 1, :])  # (B, 1)
                     loss = self.criterion(
                         torch.cat((positive_scores, negative_scores),
-                                  dim=-1))    # (B, 2)
+                                  dim=-1))  # (B, 2)
 
                 if self.grad_clip != 0.0:
                     torch.nn.utils.clip_grad_norm_(opt_model.parameters(),
@@ -450,7 +489,7 @@ class RewardModelTrainer(Trainer):
                 self.optimizer.zero_grad(set_to_none=True)
                 lossf = loss.item()
                 writer.add_scalar('Loss/train/step', lossf, total_steps)
-                pbar.set_description(f"batch loss {round(lossf,3)}")
+                pbar.set_description(f"batch loss {round(lossf, 3)}")
 
                 if total_steps != 0 and total_steps % self.save_freq == 0:
                     self.save_states(total_steps)
@@ -462,19 +501,19 @@ class RewardModelTrainer(Trainer):
                     total = 0
                     losses = []
                     for step, (completions, attention_masks) in enumerate(
-                            self.test_dataloader):
+                        self.test_dataloader):
                         completions = completions.to(self.device)
                         attention_masks = attention_masks.to(self.device)
 
                         positive_scores = opt_model(
                             completions[:, 0, :],
-                            attention_masks[:, 0, :])    # (B, 1)
+                            attention_masks[:, 0, :])  # (B, 1)
                         negative_scores = opt_model(
                             completions[:, 1, :],
-                            attention_masks[:, 1, :])    # (B, 1)
+                            attention_masks[:, 1, :])  # (B, 1)
                         loss = self.criterion(
                             torch.cat((positive_scores, negative_scores),
-                                      dim=-1))    # (B, 2)
+                                      dim=-1))  # (B, 2)
                         lossf = loss.item()
                         losses.append(lossf)
                         writer.add_scalar(
@@ -489,7 +528,7 @@ class RewardModelTrainer(Trainer):
 
                 writer.add_scalar('Loss/test/epoch', epoch_loss, epoch)
                 writer.add_scalar('Acc/test/epoch', acc, epoch)
-                print(f'Epoch: {epoch+1}, Test Loss: {lossf}, Acc: {acc}')
+                print(f'Epoch: {epoch + 1}, Test Loss: {lossf}, Acc: {acc}')
 
         self.save_states(total_steps, True)
 
@@ -560,20 +599,20 @@ class AcceleratorRewardModelTrainer(Trainer):
         for epoch in range(self.total_epochs):
             model_acc.train()
             for step, (completions, attention_masks) in enumerate(
-                    pbar := tqdm(train_dataloader)):
+                pbar := tqdm(train_dataloader)):
                 total_steps = step + epoch * len(train_dataloader)
 
                 # TODO: Support K completions instead of only 2
                 # TODO: Support gradient accumulation
                 positive_scores = model_acc(completions[:, 0, :],
                                             attention_masks[:,
-                                                            0, :])    # (B, 1)
+                                            0, :])  # (B, 1)
                 negative_scores = model_acc(completions[:, 1, :],
                                             attention_masks[:,
-                                                            1, :])    # (B, 1)
+                                            1, :])  # (B, 1)
                 loss = self.criterion(
                     torch.cat((positive_scores, negative_scores),
-                              dim=-1))    # (B, 2)
+                              dim=-1))  # (B, 2)
 
                 if self.grad_clip != 0.0:
                     torch.nn.utils.clip_grad_norm_(model_acc.parameters(),
@@ -585,7 +624,7 @@ class AcceleratorRewardModelTrainer(Trainer):
 
                 lossf = loss.item()
                 writer.add_scalar('Loss/train/step', lossf, total_steps)
-                pbar.set_description(f"batch loss {round(lossf,3)}")
+                pbar.set_description(f"batch loss {round(lossf, 3)}")
 
                 if total_steps != 0 and total_steps % self.save_freq == 0:
                     self.save_states(total_steps)
@@ -603,13 +642,13 @@ class AcceleratorRewardModelTrainer(Trainer):
 
                         positive_scores = model_acc(
                             completions[:, 0, :],
-                            attention_masks[:, 0, :])    # (B, 1)
+                            attention_masks[:, 0, :])  # (B, 1)
                         negative_scores = model_acc(
                             completions[:, 1, :],
-                            attention_masks[:, 1, :])    # (B, 1)
+                            attention_masks[:, 1, :])  # (B, 1)
                         loss = self.criterion(
                             torch.cat((positive_scores, negative_scores),
-                                      dim=-1))    # (B, 2)
+                                      dim=-1))  # (B, 2)
                         lossf = loss.item()
                         losses.append(lossf)
                         writer.add_scalar('Loss/test/step', lossf,
@@ -623,7 +662,7 @@ class AcceleratorRewardModelTrainer(Trainer):
 
                 writer.add_scalar('Loss/test/epoch', epoch_loss, epoch)
                 writer.add_scalar('Acc/test/epoch', acc, epoch)
-                print(f'Epoch: {epoch+1}, Test Loss: {lossf}, Acc: {acc}')
+                print(f'Epoch: {epoch + 1}, Test Loss: {lossf}, Acc: {acc}')
 
         self.save_states(total_steps, True)
 
@@ -673,7 +712,7 @@ class FSDPRewardModelTrainer(Trainer):
         self.model = model
         self.criterion = KPairwiseLoss()
         self.finetune_method = finetune_method
-        self.optimizer = None    # need to initiatize this later after FSDP
+        self.optimizer = None  # need to initiatize this later after FSDP
         self.scaler = GradScaler(enabled=self.dtype != torch.float32)
         self.writer = SummaryWriter(f'./runs/{self.run_name}/logs',
                                     max_queue=40)
@@ -744,7 +783,7 @@ class FSDPRewardModelTrainer(Trainer):
     def save_states(self, model, epoch=None):
         if self.rank == 0:
             save_policy = FullStateDictConfig(
-            # offload_to_cpu=True and NO_SHARD is not supported yet
+                # offload_to_cpu=True and NO_SHARD is not supported yet
                 offload_to_cpu=self.world_size > 1,
                 rank0_only=True)
             with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT,
@@ -769,7 +808,7 @@ class FSDPRewardModelTrainer(Trainer):
         if self.rank == 0:
             pbar = tqdm(range(len(self.train_dataloader)), colour="blue")
 
-        epoch_data = torch.zeros(3).to(self.rank)    # [loss, tp, total]
+        epoch_data = torch.zeros(3).to(self.rank)  # [loss, tp, total]
 
         for step, data in enumerate(self.train_dataloader):
             completions, attention_masks = data
@@ -781,12 +820,12 @@ class FSDPRewardModelTrainer(Trainer):
                 # TODO: Support K completions instead of only 2
                 # TODO: Support gradient accumulation
                 positive_scores = model(completions[:, 0, :],
-                                        attention_masks[:, 0, :])    # (B, 1)
+                                        attention_masks[:, 0, :])  # (B, 1)
                 negative_scores = model(completions[:, 1, :],
-                                        attention_masks[:, 1, :])    # (B, 1)
+                                        attention_masks[:, 1, :])  # (B, 1)
                 loss = self.criterion(
                     torch.cat((positive_scores, negative_scores),
-                              dim=-1))    # (B, 2)
+                              dim=-1))  # (B, 2)
 
             if self.grad_clip != 0.0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(),
@@ -810,7 +849,7 @@ class FSDPRewardModelTrainer(Trainer):
             if self.rank == 0:
                 pbar.update(1)
                 pbar.set_description(
-                    f"Epoch {epoch}, train loss {round(lossf,3)}")
+                    f"Epoch {epoch}, train loss {round(lossf, 3)}")
 
         dist.all_reduce(epoch_data, op=dist.ReduceOp.SUM)
         train_acc = epoch_data[1].item() / epoch_data[2].item()
@@ -819,7 +858,7 @@ class FSDPRewardModelTrainer(Trainer):
         if self.rank == 0:
             pbar.close()
             print(
-                f"Epoch {epoch}, avg train loss {round(train_loss,3)}, train acc {round(train_acc,3)}"
+                f"Epoch {epoch}, avg train loss {round(train_loss, 3)}, train acc {round(train_acc, 3)}"
             )
             if logging:
                 self.writer.add_scalar(f'Loss/train/epoch', train_loss, epoch)
@@ -833,7 +872,7 @@ class FSDPRewardModelTrainer(Trainer):
         if self.rank == 0:
             pbar = tqdm(range(len(self.test_dataloader)), colour="blue")
 
-        epoch_data = torch.zeros(3).to(self.rank)    # [loss, tp, total]
+        epoch_data = torch.zeros(3).to(self.rank)  # [loss, tp, total]
         for step, data in enumerate(self.test_dataloader):
             total_steps = step + epoch * len(self.test_dataloader)
             completions, attention_masks = data
@@ -841,12 +880,12 @@ class FSDPRewardModelTrainer(Trainer):
             attention_masks = attention_masks.to(self.device)
 
             positive_scores = model(completions[:, 0, :],
-                                    attention_masks[:, 0, :])    # (B, 1)
+                                    attention_masks[:, 0, :])  # (B, 1)
             negative_scores = model(completions[:, 1, :],
-                                    attention_masks[:, 1, :])    # (B, 1)
+                                    attention_masks[:, 1, :])  # (B, 1)
             loss = self.criterion(
                 torch.cat((positive_scores, negative_scores),
-                          dim=-1))    # (B, 2)
+                          dim=-1))  # (B, 2)
 
             lossf = loss.item()
             epoch_data[0] += lossf
@@ -861,7 +900,7 @@ class FSDPRewardModelTrainer(Trainer):
             if self.rank == 0:
                 pbar.update(1)
                 pbar.set_description(
-                    f"Epoch {epoch}, test loss {round(lossf,3)}")
+                    f"Epoch {epoch}, test loss {round(lossf, 3)}")
 
         dist.all_reduce(epoch_data, op=dist.ReduceOp.SUM)
         test_acc = epoch_data[1].item() / epoch_data[2].item()
@@ -870,7 +909,7 @@ class FSDPRewardModelTrainer(Trainer):
         if self.rank == 0:
             pbar.close()
             print(
-                f"Epoch {epoch}, avg test loss {round(test_loss,3)}, test acc {round(test_acc,3)}"
+                f"Epoch {epoch}, avg test loss {round(test_loss, 3)}, test acc {round(test_acc, 3)}"
             )
             if logging:
                 self.writer.add_scalar(f'Loss/test/epoch', test_loss, epoch)

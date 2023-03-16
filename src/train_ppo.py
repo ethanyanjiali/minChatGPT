@@ -9,10 +9,10 @@ from dataset import DahoasSFTStaticPromptsDataset
 def train(batch_size, exp_name):
 
     cfg = get_configs("gpt2-medium")
-    cfg.actor_weights = "./runs/sft_1678085469/original_sft_1678085469_step100000.pt"
-    cfg.critic_weights = "./runs/rm_1678145909/rm_1678145909_final.pt"
-    cfg.reward_model_weights = "./runs/rm_1678145909/rm_1678145909_final.pt"
-    cfg.sft_model_weights = "./runs/sft_1678085469/original_sft_1678085469_step100000.pt"
+    cfg.actor_weights = "./runs/sft_gpt2medium-batch8-full_202303140623/sft_gpt2medium-batch8-full_202303140623_final.pt"
+    cfg.critic_weights = "./runs/rm_gpt2medium-batch8-full-sft_202303141545/rm_gpt2medium-batch8-full-sft_202303141545_final.pt"
+    cfg.reward_model_weights = cfg.critic_weights
+    cfg.sft_model_weights = cfg.actor_weights
     cfg.batch_size = batch_size
     cfg.total_epochs = 2
     cfg.exp_name = exp_name

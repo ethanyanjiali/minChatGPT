@@ -196,8 +196,6 @@ class PPOTrainer(Trainer):
             print(" --- Make Experience --- ")
             print("completion", completion.shape)
             print("input_masks", input_masks.shape)
-            print("torch.count_nonzero(attention_mask, dim=1)",
-                  torch.count_nonzero(attention_mask, dim=1))
             print("num_actions", num_actions)
             print("action_mask", action_mask.shape)
             print("idx", idx.shape)

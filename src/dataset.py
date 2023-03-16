@@ -27,7 +27,7 @@ class DahoasSFTStaticPromptsDataset(Dataset):
             tokenizer = TiktokenTokenizer('gpt2')
 
         cnt = 0
-        print(f"Loading AwesomeChatGPTPromptsDataset")
+        print(f"Loading DahoasSFTStaticPromptsDataset")
         for data in dataset:
             cnt += 1
             prompt = data['prompt']
@@ -38,7 +38,7 @@ class DahoasSFTStaticPromptsDataset(Dataset):
                                return_tensors="pt")
 
             self.prompts.append(
-                [tokens['input_ids'], tokens['attention_mask'], len(tokens["input_ids"])])
+                [tokens['input_ids'], tokens['attention_mask'], torch.sum(tokens['attention_mask'])])
 
             if max_examples and cnt >= max_examples:
                 break

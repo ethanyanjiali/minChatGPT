@@ -131,7 +131,7 @@ class PPOTrainer(Trainer):
                                     max_queue=50)
         self.total_epochs = cfg.total_epochs
         self.debug = False
-        self.save_freq = 10000
+        self.save_freq = 500
         self.dtype = torch.float32
         self.tokenizer = TiktokenTokenizer("gpt2")
 
@@ -236,11 +236,10 @@ class PPOTrainer(Trainer):
         scaler = GradScaler(enabled=self.dtype != torch.float32)
         for epoch in range(self.total_epochs):
             for step, (prompt, input_masks, input_lengths) in enumerate(pbar := tqdm(self.train_dataloader)):
-                prompt, input_masks = prompt.to(self.device), input_masks.to(
-                    self.device)
+                prompt, input_masks, input_lengths = prompt.to(self.device), input_masks.to(
+                    self.device), input_lengths.to(self.device)
                 if self.debug:
                     print("prompt", prompt.shape)
-                input_lengths = torch.count_nonzero(input_masks, dim=1)  # (B)
                 max_input_length = torch.max(input_lengths)
                 prompt = prompt[:, :max_input_length]
                 if self.debug:

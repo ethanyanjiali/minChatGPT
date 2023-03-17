@@ -74,7 +74,8 @@ Assitant:"""
         cfg = get_configs("gpt2-medium")
 
         model = GPT.from_checkpoint(
-            cfg, "./runs/ppo_gpt2medium-batch8_202303161024/ppo_gpt2medium-batch8_202303161024_step1000.pt")
+            cfg,
+            "./runs/ppo_gpt2medium-batch1-fp16_202303170754/ppo_gpt2medium-batch1-fp16_202303170754_actor_step50.pt")
         # model = GPT.from_checkpoint(
         #     cfg, "./runs/sft_1678085469/original_sft_1678085469_step100000.pt")
         generate_gpt2(model, prompt, device, samples=10)

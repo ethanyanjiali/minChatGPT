@@ -76,6 +76,7 @@ def get_configs(name) -> TrainingConfig:
             lora_rank=1,
             model_name="gpt2-medium/lora",
             hf_model="gpt2-medium",
+            finetune_method="lora",
         )
     elif name == 'gpt2-large':
         return TrainingConfig(
@@ -113,6 +114,7 @@ def get_configs(name) -> TrainingConfig:
             lora_rank=1,
             model_name="gpt2-large/lora",
             hf_model="gpt2-large",
+            finetune_method="lora",
         )
     elif name == "gpt2-xl":
         return TrainingConfig(
@@ -148,4 +150,5 @@ def get_configs(name) -> TrainingConfig:
             lora_rank=1,
             model_name="gpt2-xl/lora",
             hf_model="gpt2-xl",
+            finetune_method="lora",
         )

@@ -482,7 +482,7 @@ class GPTActor(GPT):
         if compile:
             model = torch.compile(model)
         checkpoint = torch.load(ckpt_path, map_location="cpu")
-        model.load_state_dict(checkpoint["model_state_dict"], strict=False)
+        model.load_state_dict(checkpoint["model_state_dict"], strict=True)
         return model
 
 

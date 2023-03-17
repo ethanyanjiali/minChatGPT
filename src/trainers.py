@@ -134,6 +134,7 @@ class PPOTrainer(Trainer):
         self.save_freq = 500
         self.dtype = torch.float16
         self.tokenizer = TiktokenTokenizer("gpt2")
+        self.finetune_method = cfg.finetune_method
 
         hp = {
             "max_new_tokens": self.max_new_tokens,

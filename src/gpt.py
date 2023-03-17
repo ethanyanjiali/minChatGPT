@@ -242,7 +242,9 @@ class GPT(nn.Module):
         if compile:
             model = torch.compile(model)
         checkpoint = torch.load(ckpt_path, map_location="cpu")
-        model.load_state_dict(checkpoint["model_state_dict"], strict=False)
+        # for k, v in checkpoint["model_state_dict"].items():
+        #     print(k)
+        model.load_state_dict(checkpoint["model_state_dict"], strict=True)
         return model
 
     @classmethod

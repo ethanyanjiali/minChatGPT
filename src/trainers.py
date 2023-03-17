@@ -132,7 +132,7 @@ class PPOTrainer(Trainer):
         self.total_epochs = cfg.total_epochs
         self.debug = False
         self.save_freq = 500
-        self.dtype = torch.float32
+        self.dtype = torch.float16
         self.tokenizer = TiktokenTokenizer("gpt2")
 
         hp = {
@@ -146,7 +146,7 @@ class PPOTrainer(Trainer):
         print("Initialized PPO Trainer")
 
     def save_states(self, step, is_last=False):
-        file_name = f'{self.run_name}_actor_final.pt' if is_last else f'{self.run_name}_step{step}.pt'
+        file_name = f'{self.run_name}_actor_final.pt' if is_last else f'{self.run_name}_actor_step{step}.pt'
         torch.save(
             {
                 'step': step,
@@ -155,7 +155,7 @@ class PPOTrainer(Trainer):
                 'optimizer_state_dict': self.actor_optimizer.state_dict(),
             },
             f'./runs/{self.run_name}/{file_name}')
-        file_name = f'{self.run_name}_critic_final.pt' if is_last else f'{self.run_name}_step{step}.pt'
+        file_name = f'{self.run_name}_critic_final.pt' if is_last else f'{self.run_name}_critic_step{step}.pt'
         torch.save(
             {
                 'step': step,
@@ -265,10 +265,10 @@ class PPOTrainer(Trainer):
                                                       experience.actor_log_probs,
                                                       experience.advantage,
                                                       experience.action_mask)
-                    # scaler.scale(actor_loss).backward()
-                    # scaler.step(self.actor_optimizer)
-                    actor_loss.backward()
-                    self.actor_optimizer.step()
+                    scaler.scale(actor_loss).backward()
+                    scaler.step(self.actor_optimizer)
+                    # actor_loss.backward()
+                    # self.actor_optimizer.step()
                     self.actor_optimizer.zero_grad(set_to_none=True)
                     actor_lossf = actor_loss.item()
 
@@ -283,14 +283,14 @@ class PPOTrainer(Trainer):
                     critic_loss = self.critic_criterion(new_values, experience.kl_penalized_reward, experience.values,
                                                         experience.action_mask)
 
-                    # scaler.scale(critic_loss).backward()
-                    # scaler.step(self.critic_optimizer)
-                    critic_loss.backward()
-                    self.critic_optimizer.step()
+                    scaler.scale(critic_loss).backward()
+                    scaler.step(self.critic_optimizer)
+                    # critic_loss.backward()
+                    # self.critic_optimizer.step()
                     self.critic_optimizer.zero_grad(set_to_none=True)
                     critic_lossf = critic_loss.item()
 
-                    # scaler.update()
+                    scaler.update()
 
                 self.writer.add_scalar('KL', experience.estimated_kl.mean(), total_steps)
                 self.writer.add_scalar('mean_advantage', experience.advantage.mean(),

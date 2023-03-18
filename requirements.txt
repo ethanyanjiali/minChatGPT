@@ -21,6 +21,7 @@ grpcio==1.51.3
 huggingface-hub==0.12.1
 idna==3.4
 Jinja2==3.1.2
+langchain==0.0.115
 lit==15.0.7
 loralib==0.1.1
 lxml==4.9.2
@@ -31,12 +32,8 @@ multidict==6.0.4
 multiprocess==0.70.14
 networkx==3.0rc1
 numpy==1.24.1
-nvidia-cublas-cu11==11.10.3.66
-nvidia-cuda-nvrtc-cu11==11.7.99
-nvidia-cuda-runtime-cu11==11.7.99
-nvidia-cudnn-cu11==8.5.0.96
-nvidia-ml-py3==7.352.0
 oauthlib==3.2.2
+openai==0.27.2
 packaging==23.0
 pandas==1.5.3
 Pillow==9.3.0
@@ -47,7 +44,6 @@ pyasn1==0.4.8
 pyasn1-modules==0.2.8
 pycryptodomex==3.17
 python-dateutil==2.8.2
-pytorch-triton==2.0.0+b8b470bc59
 pytz==2022.7.1
 PyYAML==6.0
 regex==2022.10.31

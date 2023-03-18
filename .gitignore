@@ -10,3 +10,4 @@ logs/
 runs/
 ds/
 models/
+openai.key

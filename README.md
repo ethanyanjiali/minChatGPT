@@ -1,3 +1,3 @@
 # minChatGPT
 
-![alt text](Poster.pdf)
+![alt text](Poster.png)

@@ -1,7 +1,7 @@
 # minChatGPT
 
-This is a custom project from Stanford CS224N Winter 2023 class. The goal of this project is to answer this question
-> Will alignment from human feedback can also help small language models such as GPT-2?
+This is a custom project from [Stanford CS224N Winter 2023](https://web.stanford.edu/class/cs224n/) class. The goal of this project is to answer this question
+> Will alignment from human feedback also help small language models such as GPT-2?
 
 And the answer is YES! With RLHF, evaluation shows that ChatGPT prefers the aligned GPT-2 outputs for 88% of times over the vanilla GPT-2 outputs. 
 Please see the technical [report](./report.pdf) for more details.
@@ -40,15 +40,15 @@ First of all, you should know that ChatGPT (or InstructGPT, which is the last op
 ![InstructGPT](instructgpt.png)
 
 ## Training
-0. You need to have a GPU with at least 16GB VRAM, NVIDIA Driver 515+, CUDA 11.7+ and also Python 3.10 or higher (other versions of CUDA and Python might work but I didn't test, Python 2.0 is very demanding.).
+0. You need to have a GPU with at least 16GB VRAM, NVIDIA Driver 515+, CUDA 11.7+ and also Python 3.8 or higher (other versions of CUDA and Python might work but I didn't test, Python 2.0 is very demanding.).
 1. Install [PyTorch 2.0](https://pytorch.org/get-started/pytorch-2.0/#getting-started)
 2. Install dependencies with
 ```bash
 pip install -r requirements.txt
 ```
-3. The first step is to traing a SFT model, inside `src` directory, run this command. The bigger VRAM you have the larger batch size you can afford.
+3. The first step is to traing a SFT model, inside `src` directory, run this command. You can change batch size via `-b`. The bigger VRAM you have the larger batch size you can afford. Optionally, you can open the tensorboard.ipynb to check the training progress.
 ```bash
-python train_sft.py --n experiment_name -b 2`, you can change batch size via `-b
+python train_sft.py --n experiment_name -b 2`
 ```
 4. Once you finished SFT stage, you can start to train the reward model. You should have a directory started with `sft_` in your `runs` directory. Find the final model weights and run this. This should start a reward model training for 1 epoch and generate a directory started with `rm_` with weights in it.
 ```bash

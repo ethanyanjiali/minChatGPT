@@ -3,8 +3,7 @@
 This is a custom project from [Stanford CS224N Winter 2023](https://web.stanford.edu/class/cs224n/) class. The goal of this project is to answer this question
 > Will alignment from human feedback also help small language models such as GPT-2?
 
-And the answer is YES! With RLHF, evaluation shows that ChatGPT prefers the aligned GPT-2 outputs for 88% of times over the vanilla GPT-2 outputs. 
-Please see the technical [report](./report.pdf) for more details.
+And the answer is YES! With RLHF, evaluation shows that ChatGPT prefers the aligned GPT-2 outputs for 96% of times over the vanilla GPT-2 outputs, and 88% times over the supervised fine-tuning baseline. Please see the technical [report](./report.pdf) for more details.
 
 Also, you can test minChatGPT in [Colab Notebook](https://colab.research.google.com/drive/1LR1sbWTyaNAmTZ1g1M2tpmU_pFw1lyEX?usp=sharing)
 

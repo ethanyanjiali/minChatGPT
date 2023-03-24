@@ -6,11 +6,11 @@ from gpt import GPTActor, GPTRewardModel, GPTCritic
 from dataset import DahoasSFTStaticPromptsDataset
 
 
-def train(batch_size, exp_name):
+def train(batch_size, exp_name, actor_weights, critic_weights):
     cfg = get_configs("gpt2-medium")
-    cfg.actor_weights = "./runs/sft_gpt2medium-batch8-full_202303140623/sft_gpt2medium-batch8-full_202303140623_final.pt"
+    cfg.actor_weights = actor_weights
     # 67% gpt2-medium sft lora
-    cfg.critic_weights = "./runs/rm-gpt2medium-lora-sft/rm-gpt2medium-lora-sft.pt"
+    cfg.critic_weights = critic_weights
     # 68% gpt2-xl
     # cfg.critic_weights = "./runs/rm_1678230899/rm_1678230899_final.pt"
     # 63%
@@ -43,10 +43,10 @@ def train(batch_size, exp_name):
 @click.option('--strategy', '-s')
 @click.option('--batch-size', '-b', default=1)
 @click.option('--exp-name', '-n', default="default")
-def main(strategy, batch_size, exp_name):
-    torch.manual_seed(1234)
-
-    train(batch_size, exp_name)
+@click.option('--actor', '-a')
+@click.option('--critic', '-c')
+def main(strategy, batch_size, exp_name, actor, critic):
+    train(batch_size, exp_name, actor, critic)
 
 
 if __name__ == "__main__":

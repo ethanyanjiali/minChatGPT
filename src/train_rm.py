@@ -75,7 +75,7 @@ def train_accelerate():
 
 def train(pretrain, batch_size, exp_name):
     device = 'cuda'
-    cfg = get_configs("gpt2-medium")
+    cfg = get_configs("gpt2-medium/lora")
     cfg.batch_size = batch_size
     cfg.pretrain = pretrain
     cfg.total_epochs = 1

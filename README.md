@@ -68,6 +68,17 @@ python evaluate.py -s "/path/to/sft/model" -p "/path/to/ppo/model"
 ```
 3. This should generate the "Human" preference over each model using ChatGPT as a proxy
 
+# Citation
+just in case you need this:
+@misc{minChatGPT,
+  author = {Yanjia Li},
+  title = {minChatGPT: A minimum example of aligning language models with RLHF similar to ChatGPT},
+  year = {2023},
+  publisher = {GitHub},
+  journal = {GitHub repository},
+  howpublished = {\url{https://github.com/ethanyanjiali/minChatGPT}},
+}
+
 # Acknowledgement
 This project wouldn't been done without the help from:
 1. [Stanford CS224N](https://web.stanford.edu/class/cs224n/), Professor Manning and the TAs

@@ -43,7 +43,10 @@ def generate_gpt2(model, prompt, device):
         return res
 
 
-def main():
+@click.command()
+@click.option('--sft', '-s')
+@click.option('--ppo', '-p')
+def main(sft, ppo):
     keys = json.load(open("openai.key"))
     os.environ["OPENAI_API_KEY"] = keys["OPENAI_API_KEY"]
 
@@ -62,10 +65,10 @@ def main():
             gpt_vanilla = torch.compile(GPT.from_pretrained(cfg))
             gpt_sft = torch.compile(GPT.from_checkpoint(
                 cfg,
-                "./runs/sft_gpt2medium-batch8-full_202303140623/sft_gpt2medium-batch8-full_202303140623_final.pt"))
+                sft))
             gpt_ppo = torch.compile(GPT.from_checkpoint(
                 cfg,
-                "./runs/ppo_gpt2medium-sft-lora-batch1-fp16_202303170924/ppo_gpt2medium-sft-lora-batch1-fp16_202303170924_actor_step11500.pt"))
+                ppo))
 
             responses = []
             for prompt in tqdm(prompts):
